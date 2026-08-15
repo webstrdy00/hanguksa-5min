@@ -1,1 +1,114 @@
-# hanguksa-5min
+# 한능검 5분
+
+시험일까지 하루 5분, 5문제로 취약 시대를 반복 학습하는 **비공식** 학습 보조 미니앱 (Apps in Toss).
+
+> 국사편찬위원회 공식 서비스가 아닙니다. 비공식 학습 보조 서비스입니다.
+
+- 제품 요구사항의 기준은 `/docs` v1.3 FINAL 문서입니다.
+- 개발 규칙과 문서 우선순위는 [`AGENTS.md`](./AGENTS.md)에 정리돼 있습니다.
+- 현재 단계: **0단계(기반 구축) 완료**. 비즈니스 기능은 아직 구현하지 않았습니다.
+
+## 구성
+
+| 경로              | 내용                                                                    |
+| ----------------- | ----------------------------------------------------------------------- |
+| `frontend/`       | 앱인토스 WebView 클라이언트 (React 18 + TypeScript + Vite + TDS, SDK 3.x) |
+| `backend/`        | 학습 API 서버 (Node 24 + Fastify + PostgreSQL + Drizzle)                 |
+| `docs/`           | 제품/기술 기획 문서 (v1.3 FINAL, 로컬 보관)                              |
+| `scripts/`        | 저장소 검사 스크립트                                                     |
+| `.github/workflows/` | CI 파이프라인                                                         |
+
+## 요구 사항
+
+- Node.js **24 이상**
+- pnpm **10.10.0** (`packageManager` 필드에 고정)
+- Docker (로컬 PostgreSQL)
+
+## 처음 실행하기
+
+```bash
+# 1. 의존성 설치
+pnpm install
+
+# 2. 환경변수 준비
+cp .env.example .env                      # docker compose 용 (POSTGRES_PASSWORD 를 채운다)
+cp backend/.env.example backend/.env      # 서버 용 (DATABASE_URL 을 채운다)
+cp frontend/.env.example frontend/.env.local
+
+# 3. 로컬 DB 기동 + 마이그레이션
+pnpm db:up
+pnpm db:migrate
+
+# 4. 개발 서버
+pnpm dev:backend     # http://localhost:8080
+pnpm dev:frontend    # http://localhost:5173
+```
+
+`backend/.env` 의 `DATABASE_URL` 은 `.env` 에 넣은 값과 맞춰야 합니다.
+
+```
+postgres://{POSTGRES_USER}:{POSTGRES_PASSWORD}@127.0.0.1:{POSTGRES_PORT}/{POSTGRES_DB}
+```
+
+로컬 PostgreSQL 이 이미 5432 를 쓰고 있는 경우가 많아 기본 포트를 **5433** 으로 둡니다.
+
+## 명령어
+
+### 실행
+
+| 명령어              | 설명                                        |
+| ------------------- | ------------------------------------------- |
+| `pnpm dev:backend`  | API 서버 (파일 변경 시 자동 재시작)          |
+| `pnpm dev:frontend` | 미니앱 개발 서버                             |
+| `pnpm build`        | 전체 빌드 (frontend 는 `.ait` 번들까지 생성) |
+| `pnpm db:up`        | 로컬 PostgreSQL 컨테이너 기동                |
+| `pnpm db:down`      | 로컬 PostgreSQL 컨테이너 정리                |
+
+### 검사
+
+| 명령어               | 설명                                                     |
+| -------------------- | -------------------------------------------------------- |
+| `pnpm test`          | 전체 단위 테스트 (vitest)                                 |
+| `pnpm typecheck`     | TypeScript 타입 검사                                      |
+| `pnpm lint`          | ESLint                                                    |
+| `pnpm format`        | Prettier 적용                                             |
+| `pnpm format:check`  | Prettier 검사                                             |
+| `pnpm check:app-name`| appName 이 config/env/CORS 에서 일치하는지 검사            |
+| `pnpm check:secrets` | secretlint 로 하드코딩된 secret 검사                       |
+| `pnpm verify`        | 위 검사를 CI 와 같은 순서로 한 번에 실행                    |
+
+패키지 하나만 대상으로 하려면 `pnpm --filter @hanguksa/backend test` 처럼 실행합니다.
+
+### DB
+
+| 명령어             | 설명                                                    |
+| ------------------ | ------------------------------------------------------- |
+| `pnpm db:generate` | 스키마 변경으로부터 migration SQL 생성                   |
+| `pnpm db:migrate`  | migration 적용 (앞으로 이동만)                           |
+
+- 스키마 변경은 **반드시 migration 파일**로 남기고 커밋합니다. `drizzle-kit push` 는 쓰지 않습니다.
+- 파괴적 변경은 **expand → migrate → contract** 2단계로 나눠 배포합니다.
+- CI 가 "스키마와 migration 파일이 어긋나는지"를 검사합니다.
+
+## 환경 분리
+
+`APP_ENV` 로 `dev` / `staging` / `production` 을 구분합니다.
+
+- secret 은 저장소에 두지 않습니다. 로컬은 `.env`, staging/production 은 Secret Manager 를 씁니다.
+- `.env*` 는 `.env.example` 을 빼고 모두 git 에서 제외됩니다.
+- `VITE_` 접두사 값은 **번들에 그대로 포함**됩니다. 여기에 secret 을 넣지 않습니다.
+
+## 앱인토스 플랫폼
+
+- 설정 파일은 `frontend/apps-in-toss.config.ts` 입니다 (SDK 3.x). `granite.config.ts` 는 쓰지 않습니다.
+- `appName` 은 콘솔 등록 후 **수정할 수 없고**, 서버 CORS 허용 목록의 원본입니다.
+  - `https://<appName>.web.tossmini.com` (실서비스)
+  - `https://<appName>.private-web.tossmini.com` (콘솔 QR 테스트)
+- 현재 `appName` 은 작업명 기준 **임시값(`hanguksa5min`)** 입니다. 상표 확인 후 확정합니다.
+- `pnpm build` 는 `vite build && ait build` 를 실행해 `.ait` 번들을 만듭니다.
+
+## 기여 규칙
+
+- 커밋 메시지: `common/commit_rule` (`FEAT|FIX|DOCS|STYLE|REFACTOR|TEST|CHORE: 제목`)
+- PR 템플릿: `common/merge_rule`
+- 코드를 쓰기 전에 `AGENTS.md` 를 읽습니다. 문서에 없는 정책은 임의로 정하지 않습니다.
