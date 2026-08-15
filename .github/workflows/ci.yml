@@ -121,6 +121,20 @@ jobs:
           APP_ENV: dev
           DATABASE_URL: postgres://ci:ci@127.0.0.1:5432/ci
 
+      - name: DB 제약 통합 테스트
+        run: pnpm test:db
+        env:
+          APP_NAME: hanguksa5min
+          APP_ENV: dev
+          DATABASE_URL: postgres://ci:ci@127.0.0.1:5432/ci
+
+      - name: 개발용 seed 실행 확인
+        run: pnpm db:seed
+        env:
+          APP_NAME: hanguksa5min
+          APP_ENV: dev
+          DATABASE_URL: postgres://ci:ci@127.0.0.1:5432/ci
+
       - name: 커밋되지 않은 migration 이 없는지 확인
         run: |
           pnpm db:generate

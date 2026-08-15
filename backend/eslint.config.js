@@ -25,7 +25,8 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/db/migrate.ts', '**/*.test.ts'],
+    // CLI 성격의 스크립트와 테스트는 사람이 보는 출력이 필요하다.
+    files: ['src/db/migrate.ts', 'src/db/seed.ts', '**/*.test.ts'],
     rules: { 'no-console': 'off' },
   },
 );

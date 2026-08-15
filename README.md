@@ -68,7 +68,8 @@ postgres://{POSTGRES_USER}:{POSTGRES_PASSWORD}@127.0.0.1:{POSTGRES_PORT}/{POSTGR
 
 | 명령어               | 설명                                                     |
 | -------------------- | -------------------------------------------------------- |
-| `pnpm test`          | 전체 단위 테스트 (vitest)                                 |
+| `pnpm test`          | 단위 테스트 (DB 불필요)                                    |
+| `pnpm test:db`       | DB 제약 통합 테스트 (실제 PostgreSQL 필요)                  |
 | `pnpm typecheck`     | TypeScript 타입 검사                                      |
 | `pnpm lint`          | ESLint                                                    |
 | `pnpm format`        | Prettier 적용                                             |
@@ -85,10 +86,14 @@ postgres://{POSTGRES_USER}:{POSTGRES_PASSWORD}@127.0.0.1:{POSTGRES_PORT}/{POSTGR
 | ------------------ | ------------------------------------------------------- |
 | `pnpm db:generate` | 스키마 변경으로부터 migration SQL 생성                   |
 | `pnpm db:migrate`  | migration 적용 (앞으로 이동만)                           |
+| `pnpm db:seed`     | 개발용 seed 투입 (`APP_ENV=dev` 에서만 실행)              |
 
 - 스키마 변경은 **반드시 migration 파일**로 남기고 커밋합니다. `drizzle-kit push` 는 쓰지 않습니다.
 - 파괴적 변경은 **expand → migrate → contract** 2단계로 나눠 배포합니다.
 - CI 가 "스키마와 migration 파일이 어긋나는지"를 검사합니다.
+- `0001_invariants.sql` 은 Drizzle 스키마로 표현할 수 없는 트리거/식 인덱스를 담은 수기 migration 입니다.
+  문항 revision immutable, 답안 수정 금지, 세션 5문항 고정이 여기서 강제됩니다.
+- seed 문항은 `draft` 상태로만 들어가고 본문에 `[DEV SEED]` 가 붙습니다. 출제되지 않습니다.
 
 ## 환경 분리
 

@@ -28,5 +28,13 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "drizzle.config.ts", "vitest.config.ts", "vitest.setup.ts", "eslint.config.js"]
+  "include": [
+    "src",
+    "drizzle.config.ts",
+    "vitest.config.ts",
+    "vitest.setup.ts",
+    "vitest.db.config.ts",
+    "vitest.db.setup.ts",
+    "eslint.config.js"
+  ]
 }
