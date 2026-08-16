@@ -128,6 +128,28 @@ SDK User.getAnonymousKey()
 4. **Outbound 방화벽 허용**: `117.52.3.192`, `211.115.96.192`, `106.249.5.192` (443)
 5. 인증서 만료 모니터링과 회전 책임자 지정 (인증서를 2개 이상 등록하면 무중단 교체 가능)
 
+## 관리자 API
+
+사용자 API 와 **인증 경계가 분리**돼 있습니다 (공통 04 §2).
+
+| 구분 | 사용자 | 관리자 |
+| --- | --- | --- |
+| 경로 | `/v1/*` | `/admin/v1/*` |
+| 서명 키 | `INTERNAL_TOKEN_SECRET` | `ADMIN_TOKEN_SECRET` (다른 값 강제) |
+| 발급 | `POST /v1/auth/bootstrap` | CLI |
+| 수명 | 30분 | 12시간 |
+
+서로의 토큰은 교차 사용할 수 없습니다. 관리자 로그인 화면은 만들지 않습니다.
+
+```bash
+# 관리자 토큰 발급 (admin_users 에 등록된 이메일 기준)
+pnpm --filter @hanguksa/backend admin:token dev-reviewer@example.test
+```
+
+- 역할: `reviewer`(읽기) / `editor`, `admin`(쓰기)
+- 모든 관리자 쓰기는 `admin_audit_logs` 와 `exam_schedule_audits` 에 기록됩니다.
+- `ADMIN_IP_ALLOWLIST` 를 설정하면 해당 IP 에서만 관리자 API 가 열립니다.
+
 ## 앱인토스 플랫폼
 
 - 설정 파일은 `frontend/apps-in-toss.config.ts` 입니다 (SDK 3.x). `granite.config.ts` 는 쓰지 않습니다.

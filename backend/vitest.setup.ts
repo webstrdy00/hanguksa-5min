@@ -13,4 +13,5 @@ process.env['SERVER_PEPPER'] ??= 'test-pepper-value-not-a-real-secret-0001';
 process.env['SERVER_PEPPER_VERSION'] ??= '1';
 process.env['INTERNAL_TOKEN_SECRET'] ??= 'test-token-signing-key-not-a-real-secret';
 process.env['IDENTITY_PROVIDER'] ??= 'mock';
+process.env['ADMIN_TOKEN_SECRET'] ??= 'test-admin-signing-key-not-a-real-secret';
 process.env['DATABASE_URL'] ??= 'postgres://test:test@127.0.0.1:5432/test';

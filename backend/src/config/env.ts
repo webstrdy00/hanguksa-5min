@@ -67,6 +67,17 @@ const envSchema = z.object({
   AIT_MTLS_KEY_PATH: z.string().optional(),
   /** 검증 API 타임아웃. 초과하면 재시도 없이 503 으로 안전 실패한다. */
   AIT_VERIFY_TIMEOUT_MS: z.coerce.number().int().min(500).max(10_000).default(3000),
+
+  // -------------------------------------------------------------------------
+  // 관리자 (공통 04 §2: 사용자 API 와 인증 경계를 분리한다)
+  // -------------------------------------------------------------------------
+
+  /** 관리자 토큰 서명 키. 사용자 토큰 키와 반드시 다른 값이어야 한다. */
+  ADMIN_TOKEN_SECRET: z.string().min(32, '32자 이상이어야 해요.'),
+  /** 관리자 토큰은 CLI 로 발급한다. 사용자 토큰보다는 길지만 상한을 둔다. */
+  ADMIN_TOKEN_TTL_SECONDS: z.coerce.number().int().min(300).max(86_400).default(43_200),
+  /** 설정하면 해당 IP 에서만 관리자 API 를 허용한다 (쉼표 구분). */
+  ADMIN_IP_ALLOWLIST: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -99,6 +110,15 @@ const envSchemaWithRules = envSchema.superRefine((value, ctx) => {
       code: 'custom',
       path: ['INTERNAL_TOKEN_SECRET'],
       message: 'pepper 와 토큰 서명 키는 서로 달라야 해요.',
+    });
+  }
+
+  // 사용자 토큰으로 관리자 API 가 열리는 사고를 키 단계에서 막는다.
+  if (value.ADMIN_TOKEN_SECRET === value.INTERNAL_TOKEN_SECRET) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['ADMIN_TOKEN_SECRET'],
+      message: '관리자 토큰 키는 사용자 토큰 키와 달라야 해요.',
     });
   }
 });

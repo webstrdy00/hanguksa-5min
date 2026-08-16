@@ -8,12 +8,14 @@ const fakeDatabaseUrl = `postgres://user:${FAKE_DB_PASSWORD}@127.0.0.1:5432/db`;
 /** 테스트용 더미 secret. 실제 값이 아니다. */
 const FAKE_PEPPER = 'fake-pepper-value-for-tests-0123456789';
 const FAKE_TOKEN_SECRET = 'fake-token-secret-for-tests-0123456789';
+const FAKE_ADMIN_SECRET = 'fake-admin-secret-for-tests-0123456789';
 
 const baseEnv = {
   APP_NAME: 'hanguksa5min',
   DATABASE_URL: fakeDatabaseUrl,
   SERVER_PEPPER: FAKE_PEPPER,
   INTERNAL_TOKEN_SECRET: FAKE_TOKEN_SECRET,
+  ADMIN_TOKEN_SECRET: FAKE_ADMIN_SECRET,
 };
 
 describe('loadEnv', () => {
@@ -81,6 +83,17 @@ describe('loadEnv', () => {
 
   it('내부 토큰 TTL 기본값은 30분이다', () => {
     expect(loadEnv(baseEnv).INTERNAL_TOKEN_TTL_SECONDS).toBe(1800);
+  });
+
+  it('관리자 토큰 키가 사용자 토큰 키와 같으면 거부한다 (인증 경계 분리)', () => {
+    expect(() => loadEnv({ ...baseEnv, ADMIN_TOKEN_SECRET: FAKE_TOKEN_SECRET })).toThrow(
+      /ADMIN_TOKEN_SECRET/,
+    );
+  });
+
+  it('관리자 토큰 secret 이 없으면 서버를 띄우지 않는다', () => {
+    const { ADMIN_TOKEN_SECRET: _admin, ...withoutAdmin } = baseEnv;
+    expect(() => loadEnv(withoutAdmin)).toThrow(/ADMIN_TOKEN_SECRET/);
   });
 
   it('서브도메인으로 쓸 수 없는 APP_NAME 을 거부한다', () => {

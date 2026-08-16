@@ -8,7 +8,9 @@ import { registerErrorHandler } from './http/error-handler.ts';
 import { registerSecurity } from './http/security.ts';
 import type { AppInstance } from './http/types.ts';
 import { logger } from './observability/logger.ts';
+import { registerAdminExamRoutes } from './routes/admin-exams.ts';
 import { registerAuthRoutes } from './routes/auth.ts';
+import { registerExamRoutes } from './routes/exams.ts';
 import { registerHealthRoutes } from './routes/health.ts';
 
 /**
@@ -54,6 +56,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<AppInstan
   registerHealthRoutes(app);
   const identityProvider = options.identityProvider ?? createIdentityProvider();
   registerAuthRoutes(app, new AuthService(identityProvider));
+  registerExamRoutes(app);
+  registerAdminExamRoutes(app);
 
   return app;
 }

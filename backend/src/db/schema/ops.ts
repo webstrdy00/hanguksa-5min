@@ -77,9 +77,14 @@ export const idempotencyKeys = pgTable(
   'idempotency_keys',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    userId: uuid('user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+    /**
+     * 유일성 판단 키. `user:<uuid>` 또는 `admin:<uuid>` 형식이다.
+     * FK 로 나눠 두면 NULL 이 UNIQUE 충돌을 피해가므로 단일 문자열 키를 따로 둔다.
+     */
+    actorKey: text('actor_key').notNull(),
+    /** 사용자 삭제 시 함께 지워지도록 FK 를 유지한다 (09 §6). */
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'cascade' }),
+    adminUserId: uuid('admin_user_id').references(() => adminUsers.id, { onDelete: 'cascade' }),
     idempotencyKey: text('idempotency_key').notNull(),
     endpoint: text('endpoint').notNull(),
     /** 같은 키로 다른 본문이 오면 충돌로 처리하기 위한 해시. 본문 원문은 저장하지 않는다. */
@@ -92,8 +97,13 @@ export const idempotencyKeys = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    uniqueIndex('idempotency_keys_scope_key').on(t.userId, t.endpoint, t.idempotencyKey),
+    uniqueIndex('idempotency_keys_scope_key').on(t.actorKey, t.endpoint, t.idempotencyKey),
     index('idempotency_keys_expires_idx').on(t.expiresAt),
+    /** 사용자와 관리자 중 정확히 하나만 가리킨다. */
+    check(
+      'idempotency_keys_actor_check',
+      sql`(${t.userId} is not null) <> (${t.adminUserId} is not null)`,
+    ),
     check(
       'idempotency_keys_state_check',
       sql`${t.state} in (${sql.raw(sqlValueList(IDEMPOTENCY_STATES))})`,
