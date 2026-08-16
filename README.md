@@ -103,6 +103,31 @@ postgres://{POSTGRES_USER}:{POSTGRES_PASSWORD}@127.0.0.1:{POSTGRES_PORT}/{POSTGR
 - `.env*` 는 `.env.example` 을 빼고 모두 git 에서 제외됩니다.
 - `VITE_` 접두사 값은 **번들에 그대로 포함**됩니다. 여기에 secret 을 넣지 않습니다.
 
+## 인증
+
+앱인토스 anonKey 를 일반 API 의 영구 인증수단으로 쓰지 않습니다.
+
+```
+SDK User.getAnonymousKey()
+  -> POST /v1/auth/bootstrap   (anonKey 는 여기서만 받는다)
+  -> 내부 access token (JWT HS256, 30분)
+  -> 이후 모든 API 는 Authorization: Bearer <token>
+```
+
+- 토큰은 **메모리에만** 보관합니다. refresh token 은 없고, 만료되면 bootstrap 을 다시 합니다.
+- 처음 보는 식별키만 앱인토스 검증 API 를 호출합니다(앱당 분당 3,000회 한도).
+- anonKey 원문은 저장하지 않습니다. 조회는 HMAC fingerprint 로만 합니다.
+
+### 운영 환경 전환 체크리스트
+
+`IDENTITY_PROVIDER=mock` 은 개발 전용입니다. 운영에서는 서버가 기동하지 않습니다.
+
+1. 앱인토스 콘솔에서 mTLS 인증서 발급
+2. `AIT_MTLS_CERT_PATH` / `AIT_MTLS_KEY_PATH` 를 Secret Manager 로 주입
+3. `IDENTITY_PROVIDER=toss` 로 전환
+4. **Outbound 방화벽 허용**: `117.52.3.192`, `211.115.96.192`, `106.249.5.192` (443)
+5. 인증서 만료 모니터링과 회전 책임자 지정 (인증서를 2개 이상 등록하면 무중단 교체 가능)
+
 ## 앱인토스 플랫폼
 
 - 설정 파일은 `frontend/apps-in-toss.config.ts` 입니다 (SDK 3.x). `granite.config.ts` 는 쓰지 않습니다.

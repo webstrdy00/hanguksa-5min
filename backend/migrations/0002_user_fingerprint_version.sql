@@ -1,0 +1,2 @@
+ALTER TABLE "users" ADD COLUMN "anon_key_fingerprint_version" integer DEFAULT 1 NOT NULL;--> statement-breakpoint
+ALTER TABLE "users" ADD CONSTRAINT "users_anon_key_fingerprint_version_check" CHECK ("users"."anon_key_fingerprint_version" >= 1);

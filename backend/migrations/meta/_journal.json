@@ -15,6 +15,13 @@
       "when": 1786780299432,
       "tag": "0001_invariants",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786804837738,
+      "tag": "0002_user_fingerprint_version",
+      "breakpoints": true
     }
   ]
 }

@@ -18,7 +18,15 @@ export default tseslint.config(
       // 원칙 17: any 사용 최소화
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/consistent-type-imports': 'error',
-      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          // 구조분해로 특정 키를 제외할 때 쓰는 `_name` 변수는 예외로 둔다.
+          varsIgnorePattern: '^_',
+          ignoreRestSiblings: true,
+        },
+      ],
       // 공통 04 §2: 원문 로그 유출 방지를 위해 콘솔 직접 사용 금지 (logger를 쓴다)
       'no-console': 'error',
       eqeqeq: ['error', 'always', { null: 'ignore' }],
