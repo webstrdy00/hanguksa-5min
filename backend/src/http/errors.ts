@@ -18,6 +18,8 @@ export type ErrorCode =
   | 'STATE_CONFLICT'
   | 'ALREADY_CLAIMED'
   | 'ANSWER_ALREADY_SUBMITTED'
+  | 'IDEMPOTENCY_KEY_REUSED'
+  | 'PUBLISH_REQUIREMENTS_MISSING'
   | 'RATE_LIMITED'
   | 'DEPENDENCY_UNAVAILABLE'
   | 'IDENTITY_PROVIDER_UNAVAILABLE'
@@ -42,6 +44,14 @@ export const ERROR_DEFINITIONS: Readonly<Record<ErrorCode, ErrorDefinition>> = {
   },
   ALREADY_CLAIMED: { status: 409, message: '이미 처리된 요청이에요.' },
   ANSWER_ALREADY_SUBMITTED: { status: 422, message: '이미 제출한 답변이에요.' },
+  IDEMPOTENCY_KEY_REUSED: {
+    status: 422,
+    message: '같은 요청 키로 다른 내용을 보낼 수 없어요.',
+  },
+  PUBLISH_REQUIREMENTS_MISSING: {
+    status: 422,
+    message: '출처와 검수 정보가 있어야 발행할 수 있어요.',
+  },
   RATE_LIMITED: { status: 429, message: '요청이 너무 많아요. 잠시 후 다시 시도해주세요.' },
   DEPENDENCY_UNAVAILABLE: {
     status: 503,

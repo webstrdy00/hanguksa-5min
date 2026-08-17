@@ -12,6 +12,8 @@ describe('오류 코드 → HTTP status 매핑 (공통 05 §2)', () => {
     expect(new AppError('STATE_CONFLICT').status).toBe(409);
     expect(new AppError('ALREADY_CLAIMED').status).toBe(409);
     expect(new AppError('ANSWER_ALREADY_SUBMITTED').status).toBe(422);
+    expect(new AppError('IDEMPOTENCY_KEY_REUSED').status).toBe(422);
+    expect(new AppError('PUBLISH_REQUIREMENTS_MISSING').status).toBe(422);
     expect(new AppError('RATE_LIMITED').status).toBe(429);
     expect(new AppError('DEPENDENCY_UNAVAILABLE').status).toBe(503);
     expect(new AppError('IDENTITY_PROVIDER_UNAVAILABLE').status).toBe(503);

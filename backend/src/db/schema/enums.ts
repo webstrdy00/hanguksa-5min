@@ -120,6 +120,8 @@ export type AdminStatus = (typeof ADMIN_STATUSES)[number];
 /** 공통 04 §2 관리자 감사 대상 행위 */
 export const AUDIT_ACTIONS = [
   'create_revision',
+  'submit_question_review',
+  'approve_question',
   'publish_question',
   'retire_question',
   'void_question',

@@ -29,6 +29,13 @@
       "when": 1786849485489,
       "tag": "0003_idempotency_actor",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786892550426,
+      "tag": "0004_audit_actions_cms",
+      "breakpoints": true
     }
   ]
 }

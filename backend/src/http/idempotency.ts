@@ -114,9 +114,7 @@ export async function beginIdempotentRequest(
 
   if (existing.requestHash !== requestHash) {
     // 같은 키로 다른 내용을 보냈다. 클라이언트 버그이므로 상태를 바꾸지 않는다.
-    throw new AppError('ANSWER_ALREADY_SUBMITTED', {
-      userMessage: '같은 요청 키로 다른 내용을 보낼 수 없어요.',
-    });
+    throw new AppError('IDEMPOTENCY_KEY_REUSED');
   }
 
   if (existing.state === 'in_progress') {
