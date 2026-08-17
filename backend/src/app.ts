@@ -13,6 +13,8 @@ import { registerAdminQuestionRoutes } from './routes/admin-questions.ts';
 import { registerAuthRoutes } from './routes/auth.ts';
 import { registerExamRoutes } from './routes/exams.ts';
 import { registerHealthRoutes } from './routes/health.ts';
+import { registerStudyRoutes } from './routes/study.ts';
+import { registerWrongNoteRoutes } from './routes/wrong-notes.ts';
 
 /**
  * Fastify 애플리케이션 조립.
@@ -60,6 +62,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<AppInstan
   registerExamRoutes(app);
   registerAdminExamRoutes(app);
   registerAdminQuestionRoutes(app);
+  registerStudyRoutes(app);
+  registerWrongNoteRoutes(app);
 
   return app;
 }
