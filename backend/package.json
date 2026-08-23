@@ -18,7 +18,8 @@
     "db:migrate": "node --env-file-if-exists=.env src/db/migrate.ts",
     "test:db": "vitest run --config vitest.db.config.ts",
     "db:seed": "node --env-file-if-exists=.env src/db/seed.ts",
-    "admin:token": "node --env-file-if-exists=.env src/admin/issue-admin-token.ts"
+    "admin:token": "node --env-file-if-exists=.env src/admin/issue-admin-token.ts",
+    "jobs:mastery": "node --env-file-if-exists=.env src/jobs/mastery-recalc.ts"
   },
   "dependencies": {
     "@fastify/cors": "11.3.0",

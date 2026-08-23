@@ -110,6 +110,14 @@ export type NoticeType = (typeof NOTICE_TYPES)[number];
 export const DELETION_STATUSES = ['requested', 'in_progress', 'completed', 'failed'] as const;
 export type DeletionStatus = (typeof DELETION_STATUSES)[number];
 
+/** 07 §9 숙련도 재계산 작업 상태 */
+export const RECALC_STATUSES = ['pending', 'running', 'completed', 'failed'] as const;
+export type RecalcStatus = (typeof RECALC_STATUSES)[number];
+
+/** 재계산 사유. 왜 돌렸는지 추적한다. */
+export const RECALC_REASONS = ['question_voided', 'manual'] as const;
+export type RecalcReason = (typeof RECALC_REASONS)[number];
+
 /** 관리자 역할. 인증 방식은 미정(AGENTS.md §9 #12)이며 여기서는 권한 구분만 둔다. */
 export const ADMIN_ROLES = ['reviewer', 'editor', 'admin'] as const;
 export type AdminRole = (typeof ADMIN_ROLES)[number];

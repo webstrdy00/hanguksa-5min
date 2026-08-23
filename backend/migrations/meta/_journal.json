@@ -36,6 +36,13 @@
       "when": 1786892550426,
       "tag": "0004_audit_actions_cms",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787490766826,
+      "tag": "0005_mastery_recalc_jobs",
+      "breakpoints": true
     }
   ]
 }

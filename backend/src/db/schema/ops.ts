@@ -12,8 +12,11 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { adminUsers } from './admin.ts';
+import { questionRevisions } from './content.ts';
 import {
   DELETION_STATUSES,
+  RECALC_REASONS,
+  RECALC_STATUSES,
   IDEMPOTENCY_STATES,
   PUSH_TARGET_STATUSES,
   SEND_STATUSES,
@@ -171,4 +174,48 @@ export const featureFlags = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [check('feature_flags_key_check', sql`length(${t.key}) > 0`)],
+);
+
+/**
+ * 숙련도 재계산 작업 (07 §9, 09 §5).
+ *
+ * 문항이 void 되면 그 문항을 푼 모든 사용자의 mastery 를 다시 계산해야 한다.
+ * 사용자 수가 많을 수 있으므로 void 트랜잭션에서 동기 처리하지 않고
+ * 작업으로 남긴 뒤 배치가 처리한다.
+ *
+ * 작업은 멱등하다. 중간에 실패해도 다시 돌리면 같은 결과가 된다.
+ */
+export const masteryRecalcJobs = pgTable(
+  'mastery_recalc_jobs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    questionRevisionId: uuid('question_revision_id')
+      .notNull()
+      .references(() => questionRevisions.id, { onDelete: 'restrict' }),
+    reason: text('reason').notNull(),
+    status: text('status').notNull().default('pending'),
+    totalUsers: integer('total_users').notNull().default(0),
+    processedUsers: integer('processed_users').notNull().default(0),
+    requestedBy: uuid('requested_by').references(() => adminUsers.id, { onDelete: 'set null' }),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('mastery_recalc_jobs_status_idx').on(t.status, t.createdAt),
+    check(
+      'mastery_recalc_jobs_status_check',
+      sql`${t.status} in (${sql.raw(sqlValueList(RECALC_STATUSES))})`,
+    ),
+    check(
+      'mastery_recalc_jobs_reason_check',
+      sql`${t.reason} in (${sql.raw(sqlValueList(RECALC_REASONS))})`,
+    ),
+    check(
+      'mastery_recalc_jobs_progress_check',
+      sql`${t.processedUsers} >= 0 and ${t.totalUsers} >= 0`,
+    ),
+  ],
 );

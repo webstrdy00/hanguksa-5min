@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { authenticate, requireUser } from '../http/authenticate.ts';
 import { AppError } from '../http/errors.ts';
 import type { AppInstance } from '../http/types.ts';
+import { FLAG_DAILY_STUDY, assertEnabled } from '../services/feature-flags.ts';
 import { completeSession, startTodaySession, submitAnswer } from '../services/study-session.ts';
 
 /**
@@ -41,6 +42,13 @@ export function registerStudyRoutes(app: AppInstance): void {
 
   app.post('/v1/study/today', { preHandler: authenticate }, async (request) => {
     const user = requireUser(request);
+
+    // 잘못된 문항이 대량으로 나간 경우 재배포 없이 즉시 막을 수 있어야 한다 (공통 02 §7).
+    await assertEnabled(
+      FLAG_DAILY_STUDY,
+      '오늘의 학습을 잠시 준비 중이에요. 잠시 후 다시 시도해주세요.',
+    );
+
     const view = await startTodaySession(user.id, new Date());
 
     request.log.info(

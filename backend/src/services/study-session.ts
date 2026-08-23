@@ -301,6 +301,8 @@ export async function submitAnswer(
     .select({
       revisionId: questionRevisions.id,
       canonicalQuestionId: studySessionItems.canonicalQuestionId,
+      era: questionRevisions.era,
+      topic: questionRevisions.topic,
       correctIndex: questionRevisions.correctIndex,
       explanation: questionRevisions.explanation,
       wrongAnswerNotes: questionRevisions.wrongAnswerNotes,
@@ -358,6 +360,14 @@ export async function submitAnswer(
           canonicalQuestionId: item.canonicalQuestionId,
           isCorrect,
           studyDate,
+          answeredAt: now,
+        });
+
+        await applyMastery(tx, {
+          userId,
+          era: item.era,
+          topic: item.topic,
+          isCorrect,
           answeredAt: now,
         });
       });
@@ -446,6 +456,43 @@ async function applyReviewState(
         correctCount: params.isCorrect
           ? sql`${userQuestionState.correctCount} + 1`
           : userQuestionState.correctCount,
+        updatedAt: params.answeredAt,
+      },
+    });
+}
+
+/**
+ * 시대×주제 숙련도 증분 갱신 (03 §2, 07 §3).
+ *
+ * 답안 시점에는 published 문항만 출제되므로 그대로 집계한다.
+ * 나중에 void 되면 7단계의 재계산 job 이 mastery 를 다시 계산한다 (07 §9).
+ */
+async function applyMastery(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  params: {
+    userId: string;
+    era: string;
+    topic: string;
+    isCorrect: boolean;
+    answeredAt: Date;
+  },
+): Promise<void> {
+  await tx
+    .insert(mastery)
+    .values({
+      userId: params.userId,
+      era: params.era,
+      topic: params.topic,
+      seenCount: 1,
+      correctCount: params.isCorrect ? 1 : 0,
+      lastSeenAt: params.answeredAt,
+    })
+    .onConflictDoUpdate({
+      target: [mastery.userId, mastery.era, mastery.topic],
+      set: {
+        seenCount: sql`${mastery.seenCount} + 1`,
+        correctCount: params.isCorrect ? sql`${mastery.correctCount} + 1` : mastery.correctCount,
+        lastSeenAt: params.answeredAt,
         updatedAt: params.answeredAt,
       },
     });

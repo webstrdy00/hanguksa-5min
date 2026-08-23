@@ -22,6 +22,7 @@ import {
 } from '../http/idempotency.ts';
 import type { AppInstance } from '../http/types.ts';
 import { writeAuditLog } from '../services/audit.ts';
+import { enqueueMasteryRecalc } from '../services/mastery-jobs.ts';
 import type { AuditAction } from '../db/schema/enums.ts';
 
 /**
@@ -378,6 +379,18 @@ export function registerAdminQuestionRoutes(app: AppInstance): void {
             status: questionRevisions.status,
           });
 
+        // void 는 사용자 통계에 영향을 준다. 재계산 작업을 같은 트랜잭션에서 남긴다 (07 §9).
+        // 동기 재계산은 하지 않는다. 그 문항을 푼 사용자가 많을 수 있다.
+        if (target === 'voided') {
+          await enqueueMasteryRecalc(tx, {
+            questionRevisionId: params.data.id,
+            reason: 'question_voided',
+            requestedBy: admin.id,
+          });
+        }
+
+        // void 는 사용자 통계에 영향을 준다. 재계산 작업을 같은 트랜잭션에서 남긴다 (07 §9).
+        // 동기 재계산은 하지 않는다. 그 문항을 푼 사용자가 많을 수 있다.
         const action = AUDIT_BY_STATUS[target];
         if (action != null) {
           await writeAuditLog(tx, {

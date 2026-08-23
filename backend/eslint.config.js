@@ -38,6 +38,7 @@ export default tseslint.config(
       'src/db/migrate.ts',
       'src/db/seed.ts',
       'src/admin/issue-admin-token.ts',
+      'src/jobs/mastery-recalc.ts',
       '**/*.test.ts',
     ],
     rules: { 'no-console': 'off' },
