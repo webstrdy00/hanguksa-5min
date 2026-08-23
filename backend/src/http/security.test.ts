@@ -61,6 +61,30 @@ describe('보안 헤더와 오류 응답', () => {
     expect(response.headers['x-request-id']).not.toBe('client-supplied');
   });
 
+  it('content-type 만 있고 본문이 비어도 400 이 아니다', async () => {
+    // 본문이 필요 없는 POST 에 재시도 라이브러리가 헤더를 붙이는 경우가 있다.
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/study/today',
+      headers: { 'content-type': 'application/json' },
+      payload: '',
+    });
+
+    // 인증이 없으므로 401 이 맞다. 본문 파싱 단계에서 400 이 나면 안 된다.
+    expect(response.statusCode).toBe(401);
+  });
+
+  it('깨진 JSON 은 그대로 400 이다', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/bootstrap',
+      headers: { 'content-type': 'application/json' },
+      payload: '{not-json',
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
   it('없는 경로는 공통 오류 envelope 로 404 를 돌려준다', async () => {
     const response = await app.inject({ method: 'GET', url: '/v1/does-not-exist' });
 

@@ -46,6 +46,29 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<AppInstan
     },
   });
 
+  /**
+   * 본문이 없는 POST 를 허용한다.
+   *
+   * `POST /v1/study/today` 같은 엔드포인트는 본문이 필요 없다.
+   * 그런데 클라이언트가 content-type: application/json 을 붙이고 빈 본문을 보내면
+   * 기본 파서가 400 을 낸다. 재시도 라이브러리나 프록시가 헤더를 붙이는 경우가 있어
+   * 빈 본문은 본문 없음으로 취급한다. 깨진 JSON 은 그대로 400 이다.
+   */
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_request, payload, done) => {
+    const raw = typeof payload === 'string' ? payload.trim() : '';
+    if (raw.length === 0) {
+      done(null, undefined);
+      return;
+    }
+    try {
+      done(null, JSON.parse(raw));
+    } catch {
+      // Fastify 기본 파서처럼 400 으로 내려준다. statusCode 가 없으면 500 으로 잡힌다.
+      const parseError = Object.assign(new Error('Invalid JSON body'), { statusCode: 400 });
+      done(parseError, undefined);
+    }
+  });
+
   await registerSecurity(app);
 
   // 레이트리밋은 라우트별로 명시해서 건다 (공통 04 §3).
