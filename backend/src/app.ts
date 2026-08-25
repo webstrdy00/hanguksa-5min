@@ -13,6 +13,8 @@ import { registerAdminQuestionRoutes } from './routes/admin-questions.ts';
 import { registerAuthRoutes } from './routes/auth.ts';
 import { registerExamRoutes } from './routes/exams.ts';
 import { registerHealthRoutes } from './routes/health.ts';
+import { registerAccountRoutes } from './routes/account.ts';
+import { registerNotificationRoutes } from './routes/notifications.ts';
 import { registerOpsRoutes } from './routes/ops.ts';
 import { registerProgressRoutes } from './routes/progress.ts';
 import { registerStudyRoutes } from './routes/study.ts';
@@ -90,6 +92,8 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<AppInstan
   registerStudyRoutes(app);
   registerProgressRoutes(app);
   registerOpsRoutes(app);
+  registerAccountRoutes(app);
+  registerNotificationRoutes(app);
   registerWrongNoteRoutes(app);
 
   return app;

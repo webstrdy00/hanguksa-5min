@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMarkReviewed, useWrongNotes } from '../api/hooks.ts';
+import { trackComplete, trackScreen } from '../analytics/events.ts';
 import { ERA_LABELS, type WrongNoteItem } from '../api/types.ts';
 import {
   ActionButton,
@@ -33,6 +34,10 @@ export function WrongNotesScreen(): JSX.Element {
   const [tab, setTab] = useState<Tab>('unreviewed');
   const [era, setEra] = useState<string | null>(null);
   const notes = useWrongNotes(tab, era, true);
+
+  useEffect(() => {
+    trackScreen('wrong_notes');
+  }, []);
 
   return (
     <Screen>
@@ -252,7 +257,11 @@ function WrongNoteCard({ item }: { item: WrongNoteItem }): JSX.Element {
             <div style={{ marginTop: 12 }}>
               <ActionButton
                 variant="secondary"
-                onClick={() => markReviewed.mutate(item.canonicalQuestionId)}
+                onClick={() =>
+                  markReviewed.mutate(item.canonicalQuestionId, {
+                    onSuccess: () => trackComplete('review'),
+                  })
+                }
                 pending={markReviewed.isPending}
                 pendingLabel="기록하고 있어요"
               >

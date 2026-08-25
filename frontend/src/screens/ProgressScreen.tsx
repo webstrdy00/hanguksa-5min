@@ -1,4 +1,6 @@
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { trackScreen } from '../analytics/events.ts';
 import { useProgress } from '../api/hooks.ts';
 import { ERA_LABELS, type EraProgress } from '../api/types.ts';
 import {
@@ -21,6 +23,10 @@ import {
 export function ProgressScreen(): JSX.Element {
   const navigate = useNavigate();
   const progress = useProgress(true);
+
+  useEffect(() => {
+    trackScreen('progress');
+  }, []);
 
   return (
     <Screen>

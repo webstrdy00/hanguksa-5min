@@ -1,5 +1,7 @@
 import { useState } from 'react';
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { trackScreen } from '../analytics/events.ts';
 import { useExams, useUpdateGoal } from '../api/hooks.ts';
 import {
   ActionButton,
@@ -31,6 +33,10 @@ export function OnboardingScreen(): JSX.Element {
   const navigate = useNavigate();
   const exams = useExams(true);
   const updateGoal = useUpdateGoal();
+
+  useEffect(() => {
+    trackScreen('onboarding');
+  }, []);
 
   const [grade, setGrade] = useState<number | null>(null);
   const [examId, setExamId] = useState<string | null>(null);

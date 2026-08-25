@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSubmitAnswer, useTodaySession } from '../api/hooks.ts';
 import { ERA_LABELS, TOPIC_LABELS, type SessionItem } from '../api/types.ts';
+import { trackClick, trackOperational, trackScreen } from '../analytics/events.ts';
 import { ReportDialog } from '../components/ReportDialog.tsx';
 import {
   ActionButton,
@@ -36,10 +37,21 @@ export function StudyScreen(): JSX.Element {
   const sessionId = session.data?.session.id;
   const submitAnswer = useSubmitAnswer(sessionId);
 
+  useEffect(() => {
+    trackScreen('study');
+  }, []);
+
   const items = useMemo(() => session.data?.items ?? [], [session.data]);
   const current: SessionItem | undefined = items[cursor];
 
   /** 아직 답하지 않은 유효 문항이 있는지 */
+  // 09 §2: 오류 문항이 사용자에게 노출된 사실을 운영 지표로 남긴다.
+  useEffect(() => {
+    if (current?.voided === true) {
+      trackOperational('voided_question_seen', { slot_index: current.slotIndex });
+    }
+  }, [current]);
+
   const remaining = items.filter((item) => !item.voided && !item.answered).length;
 
   const goNext = (): void => {
@@ -65,6 +77,8 @@ export function StudyScreen(): JSX.Element {
 
   const submit = (): void => {
     if (current == null || selected == null) return;
+    // 문항 원문이나 고른 답을 보내지 않는다. 진행 위치만 남긴다 (07 §7).
+    trackClick('answer', { slot_index: current.slotIndex });
     submitAnswer.mutate({
       questionRevisionId: current.questionRevisionId,
       selectedIndex: selected,

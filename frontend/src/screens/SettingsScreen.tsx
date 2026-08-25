@@ -1,5 +1,9 @@
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { trackScreen } from '../analytics/events.ts';
 import { useCorrections, useExams } from '../api/hooks.ts';
+import { DeleteAccountDialog } from '../components/DeleteAccountDialog.tsx';
+import { NotificationSetting } from '../components/NotificationSetting.tsx';
 import {
   ActionButton,
   AsyncBoundary,
@@ -20,6 +24,11 @@ export function SettingsScreen(): JSX.Element {
   const navigate = useNavigate();
   const exams = useExams(true);
   const corrections = useCorrections(true);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+
+  useEffect(() => {
+    trackScreen('settings');
+  }, []);
 
   return (
     <Screen>
@@ -114,20 +123,25 @@ export function SettingsScreen(): JSX.Element {
       )}
 
       <Section>
-        <h2 style={{ fontSize: 15, fontWeight: 700, margin: '24px 0 8px' }}>준비 중인 기능</h2>
-        <ul
+        <h2 style={{ fontSize: 15, fontWeight: 700, margin: '24px 0 8px' }}>알림</h2>
+        <NotificationSetting />
+      </Section>
+
+      <Section>
+        <h2 style={{ fontSize: 15, fontWeight: 700, margin: '24px 0 8px' }}>데이터 삭제</h2>
+        <p
           style={{
-            listStyle: 'none',
-            padding: 0,
-            margin: 0,
-            color: '#8b95a1',
+            margin: '0 0 12px',
+            color: '#6b7684',
             fontSize: 14,
-            lineHeight: 2,
+            lineHeight: 1.6,
           }}
         >
-          <li>알림 설정</li>
-          <li>데이터 삭제 및 탈퇴</li>
-        </ul>
+          학습 기록과 오답노트, 연속 학습일이 모두 사라져요. 되돌릴 수 없어요.
+        </p>
+        <ActionButton variant="secondary" onClick={() => setDeleteOpen(true)}>
+          데이터 삭제 및 탈퇴
+        </ActionButton>
       </Section>
 
       <Section>
@@ -152,6 +166,8 @@ export function SettingsScreen(): JSX.Element {
       </Section>
 
       <div style={{ height: 32 }} />
+
+      {deleteOpen && <DeleteAccountDialog onClose={() => setDeleteOpen(false)} />}
     </Screen>
   );
 }

@@ -48,7 +48,7 @@ export function setReauthorizer(handler: (() => Promise<string | null>) | null):
 }
 
 interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: unknown;
   /** 인증이 필요 없는 요청(bootstrap)만 false 로 둔다. */
   authorized?: boolean;

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCompleteSession, useTodaySession } from '../api/hooks.ts';
+import { trackComplete, trackScreen } from '../analytics/events.ts';
 import { ERA_LABELS } from '../api/types.ts';
 import {
   ActionButton,
@@ -29,12 +30,25 @@ export function ResultScreen(): JSX.Element {
   const complete = useCompleteSession(sessionId);
   const requested = useRef(false);
 
+  useEffect(() => {
+    trackScreen('result');
+  }, []);
+
   const alreadyCompleted = session.data?.session.completedAt != null;
 
   useEffect(() => {
     if (sessionId == null || requested.current || alreadyCompleted) return;
     requested.current = true;
-    complete.mutate();
+    complete.mutate(undefined, {
+      onSuccess: (data) => {
+        // 대표 전환 지표 (08 §6). 점수와 연속일수만 남기고 문항 정보는 넣지 않는다.
+        trackComplete('daily_study', {
+          score: data.session.score,
+          valid_count: data.validCount,
+          streak_days: data.streak.days,
+        });
+      },
+    });
   }, [sessionId, alreadyCompleted, complete]);
 
   return (

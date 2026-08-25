@@ -1,4 +1,6 @@
+import { useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { trackClick, trackScreen } from '../analytics/events.ts';
 import { useCorrections, useExams, useProgress } from '../api/hooks.ts';
 import { ERA_LABELS } from '../api/types.ts';
 import {
@@ -23,6 +25,10 @@ export function HomeScreen(): JSX.Element {
   const exams = useExams(true);
   const progress = useProgress(true);
   const corrections = useCorrections(true);
+
+  useEffect(() => {
+    trackScreen('home');
+  }, []);
 
   return (
     <Screen>
@@ -154,7 +160,12 @@ export function HomeScreen(): JSX.Element {
                   <div style={{ flex: 1 }} />
                   <UnofficialNotice compact />
                   <BottomCta>
-                    <ActionButton onClick={() => void navigate('/study')}>
+                    <ActionButton
+                      onClick={() => {
+                        trackClick('start_daily_study');
+                        void navigate('/study');
+                      }}
+                    >
                       오늘 5문제 풀기
                     </ActionButton>
                   </BottomCta>
