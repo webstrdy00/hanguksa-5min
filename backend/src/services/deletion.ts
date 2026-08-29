@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { revokedFingerprint } from '../auth/fingerprint.ts';
 import { db } from '../db/client.ts';
 import { questionReports } from '../db/schema/content.ts';
@@ -151,14 +151,17 @@ async function executeDeletion(jobId: string, userId: string, now: Date): Promis
       .from(studySessions)
       .where(eq(studySessions.userId, userId));
 
-    let answerCount = 0;
-    for (const session of sessions) {
-      const removed = await tx
-        .delete(answers)
-        .where(eq(answers.sessionId, session.id))
-        .returning({ id: answers.id });
-      answerCount += removed.length;
-    }
+    // 세션마다 DELETE 를 돌리면 세션 수만큼 쿼리가 나간다.
+    // 오래 사용한 계정일수록 느려지므로 한 번에 지운다.
+    const sessionIds = sessions.map((session) => session.id);
+    const removedAnswers =
+      sessionIds.length === 0
+        ? []
+        : await tx
+            .delete(answers)
+            .where(inArray(answers.sessionId, sessionIds))
+            .returning({ id: answers.id });
+    const answerCount = removedAnswers.length;
 
     // 세션을 지우면 항목은 cascade 로 함께 사라진다.
     // 항목만 먼저 지우면 "세션당 5문항" deferred 제약에 걸린다.

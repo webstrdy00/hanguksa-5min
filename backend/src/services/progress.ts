@@ -1,4 +1,4 @@
-import { and, desc, eq, gte } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray } from 'drizzle-orm';
 import { db } from '../db/client.ts';
 import { questionRevisions } from '../db/schema/content.ts';
 import type { Era, Topic } from '../db/schema/enums.ts';
@@ -89,14 +89,20 @@ async function loadRecentDays(userId: string, now: Date): Promise<DailyRecord[]>
     .where(and(eq(studySessions.userId, userId), gte(studySessions.studyDate, from)))
     .orderBy(desc(studySessions.studyDate));
 
+  // 세션마다 따로 세면 N+1 이 된다. 한 번에 묶어서 센다.
   const answeredCounts = new Map<string, number>();
+  const sessionIds = sessions.map((session) => session.id);
 
-  for (const session of sessions) {
-    const rows = await db
-      .select({ selectedIndex: answers.selectedIndex })
+  if (sessionIds.length > 0) {
+    const counted = await db
+      .select({ sessionId: answers.sessionId, total: count() })
       .from(answers)
-      .where(eq(answers.sessionId, session.id));
-    answeredCounts.set(session.id, rows.length);
+      .where(inArray(answers.sessionId, sessionIds))
+      .groupBy(answers.sessionId);
+
+    for (const row of counted) {
+      answeredCounts.set(row.sessionId, row.total);
+    }
   }
 
   const byDate = new Map(sessions.map((session) => [session.studyDate, session]));

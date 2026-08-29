@@ -9,6 +9,7 @@ import {
   AsyncBoundary,
   MIN_TOUCH_SIZE,
   Screen,
+  SettingsScreenNotice,
   Section,
   StatusTag,
 } from '../components/common.tsx';
@@ -146,23 +147,7 @@ export function SettingsScreen(): JSX.Element {
 
       <Section>
         <h2 style={{ fontSize: 15, fontWeight: 700, margin: '24px 0 8px' }}>서비스 정보</h2>
-        <p
-          style={{
-            margin: 0,
-            padding: 14,
-            borderRadius: 12,
-            background: '#f2f4f6',
-            color: '#6b7684',
-            fontSize: 13,
-            lineHeight: 1.7,
-          }}
-        >
-          이 서비스는 국사편찬위원회 공식 서비스가 아닌 비공식 학습 보조 서비스예요.
-          <br />
-          시험 일정과 접수는 공식 홈페이지에서 확인해주세요.
-          <br />
-          문항은 자체 제작했고, 오류를 발견하면 문제 화면에서 제보할 수 있어요.
-        </p>
+        <SettingsScreenNotice />
       </Section>
 
       <div style={{ height: 32 }} />

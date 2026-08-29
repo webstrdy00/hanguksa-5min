@@ -172,6 +172,34 @@ export function UnofficialNotice({ compact = false }: { compact?: boolean }): JS
   );
 }
 
+/**
+ * 설정 화면의 서비스 정보 문구 (09 §4, 07 §7).
+ *
+ * 비공식 고지와 금지 표현 기준을 한 곳에 모아 테스트로 고정한다.
+ * 문구를 바꾸면 UnofficialNotice.test.tsx 가 깨진다.
+ */
+export function SettingsScreenNotice(): JSX.Element {
+  return (
+    <p
+      style={{
+        margin: 0,
+        padding: 14,
+        borderRadius: 12,
+        background: '#f2f4f6',
+        color: '#6b7684',
+        fontSize: 13,
+        lineHeight: 1.7,
+      }}
+    >
+      이 서비스는 국사편찬위원회 공식 서비스가 아닌 비공식 학습 보조 서비스예요.
+      <br />
+      시험 일정과 접수는 공식 홈페이지에서 확인해주세요.
+      <br />
+      문항은 자체 제작했고, 오류를 발견하면 문제 화면에서 제보할 수 있어요.
+    </p>
+  );
+}
+
 /** 상태를 색이 아니라 텍스트와 기호로 구분한다 (공통 05 §3). */
 export function StatusTag({
   tone,
