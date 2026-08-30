@@ -1,0 +1,47 @@
+# Fly.io 배포 설정
+#
+# 사용법
+#   fly launch --no-deploy --dockerfile backend/Dockerfile
+#   fly postgres create --region nrt && fly postgres attach <db>
+#   fly secrets set INTERNAL_TOKEN_SECRET=... ADMIN_TOKEN_SECRET=... SERVER_PEPPER=...
+#   fly deploy
+#
+# 도메인은 <app>.fly.dev 로 HTTPS 가 제공된다. 도메인 구입 불필요.
+# 리전은 서울(icn) 또는 도쿄(nrt) 를 쓴다. 사용자가 국내라 지연이 작다.
+
+app = "hanguksa5min-api"
+primary_region = "icn"
+
+[build]
+dockerfile = "Dockerfile"
+
+[env]
+APP_ENV = "production"
+NODE_ENV = "production"
+APP_NAME = "hanguksa5min"
+HOST = "0.0.0.0"
+PORT = "8080"
+AIT_USER_KEY_VERIFY_URL = "https://apps-in-toss-api.toss.im/api-partner/v1/apps-in-toss/users/anon-key/verify"
+
+# 인증서 발급 후 아래 두 값을 켠다. 파일은 [[mounts]] 또는 fly secrets 파일로 넣는다.
+# IDENTITY_PROVIDER = "toss"
+# AIT_MTLS_CERT_PATH = "/app/secrets/ait-client.crt"
+# AIT_MTLS_KEY_PATH = "/app/secrets/ait-client.key"
+
+[http_service]
+internal_port = 8080
+force_https = true
+auto_stop_machines = false
+# 상주 프로세스가 필요하다. 재계산 배치와 DB 풀이 있어서 0 으로 내리지 않는다.
+min_machines_running = 1
+
+[[http_service.checks]]
+grace_period = "20s"
+interval = "30s"
+method = "GET"
+timeout = "5s"
+path = "/health"
+
+[[vm]]
+size = "shared-cpu-1x"
+memory = "512mb"

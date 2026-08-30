@@ -74,3 +74,20 @@ Thumbs.db
 # 임시
 # ---------------------------------------------------------------------------
 .tmp-inspect/
+
+# 콘솔 등록용 자산(스크린샷·로고). 앱 번들에 포함하지 않는다.
+assets/console/
+.factcache/
+factcheck-report.json
+
+# 배포용 시크릿 임시 파일. 절대 커밋 금지.
+railway-secrets.txt
+
+# 문항 원본(content/all-300.json)만 버전 관리한다.
+# 아래는 재생성되거나 이미 반영이 끝난 파생물이라 커밋하지 않는다.
+# 배치 원본을 남겨 두면 통합본과 순서가 어긋나 원본으로 착각할 수 있다.
+content/archive/
+content/*-review.html
+
+# Neon 접속 정보 임시 파일. 커밋 금지.
+backend/.neon-url.txt

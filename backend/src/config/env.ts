@@ -63,8 +63,23 @@ const envSchema = z.object({
     .string()
     .url()
     .default('https://apps-in-toss-api.toss.im/api-partner/v1/apps-in-toss/users/anon-key/verify'),
-  AIT_MTLS_CERT_PATH: z.string().optional(),
-  AIT_MTLS_KEY_PATH: z.string().optional(),
+  /*
+   * 빈 문자열은 "설정 안 함"과 같게 취급한다.
+   * `AIT_MTLS_CERT_PATH=` 처럼 값만 비워 두면 검증을 통과해 버려서,
+   * 나중에 파일 읽기에서 ENOENT 로 터진다. 원인을 바로 알려 주지 못한다.
+   */
+  AIT_MTLS_CERT_PATH: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .transform((v) => (v === '' ? undefined : v)),
+  AIT_MTLS_KEY_PATH: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .transform((v) => (v === '' ? undefined : v)),
   /** 검증 API 타임아웃. 초과하면 재시도 없이 503 으로 안전 실패한다. */
   AIT_VERIFY_TIMEOUT_MS: z.coerce.number().int().min(500).max(10_000).default(3000),
 

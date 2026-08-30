@@ -19,7 +19,14 @@
     "test:db": "vitest run --config vitest.db.config.ts",
     "db:seed": "node --env-file-if-exists=.env src/db/seed.ts",
     "admin:token": "node --env-file-if-exists=.env src/admin/issue-admin-token.ts",
-    "jobs:mastery": "node --env-file-if-exists=.env src/jobs/mastery-recalc.ts"
+    "jobs:mastery": "node --env-file-if-exists=.env src/jobs/mastery-recalc.ts",
+    "import:questions": "node --env-file-if-exists=.env src/admin/import-questions.ts",
+    "review:sheet": "node src/admin/build-review-sheet.ts",
+    "questions:normalize": "node src/admin/normalize-questions.ts",
+    "questions:fix": "node src/admin/apply-choice-fix.ts",
+    "questions:fix-distractor": "node src/admin/apply-distractor-fix.ts",
+    "questions:fix-explanation": "node src/admin/apply-explanation-fix.ts",
+    "questions:factcheck": "node src/admin/fact-check.ts"
   },
   "dependencies": {
     "@fastify/cors": "11.3.0",

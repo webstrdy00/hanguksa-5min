@@ -16,7 +16,7 @@ pnpm --filter @hanguksa/frontend deploy   # 콘솔 업로드 (콘솔 API 키 필
 
 - `apps-in-toss.config.ts` 가 플랫폼 설정 파일입니다(SDK 3.x). `granite.config.ts` 는 사용하지 않습니다.
 - `appName` 은 콘솔 등록 후 수정할 수 없고, CORS Origin 허용 목록의 원본입니다.
-  현재 값은 임시값이며 상표 확인 후 확정합니다.
+  값은 `hanguksa5min` 으로 확정했습니다. 콘솔 등록 후에는 변경할 수 없습니다.
 - 배포 API 키는 [앱인토스 콘솔](https://apps-in-toss.toss.im/) > 워크스페이스 > API 키에서 발급합니다.
   키는 저장소에 커밋하지 않습니다.
 

@@ -10,11 +10,21 @@ import { ActionButton, ErrorState, MIN_TOUCH_SIZE } from './common.tsx';
  * - 삭제 후에는 토큰을 즉시 버려 이후 요청이 나가지 않게 한다.
  *
  * 다크패턴은 쓰지 않는다. 취소가 기본이고 삭제 버튼을 숨기거나 미루지 않는다 (02 UX §5).
+ *
+ * ⚠ 비게임 출시 가이드: `window.location.replace` 로 브라우저 히스토리를 조작하면
+ * 검수에서 반려된다. 화면 이동은 라우터로만 처리한다.
  */
 
 const CONFIRM_PHRASE = '삭제';
 
-export function DeleteAccountDialog({ onClose }: { onClose: () => void }): JSX.Element {
+export function DeleteAccountDialog({
+  onClose,
+  onDone,
+}: {
+  onClose: () => void;
+  /** 삭제가 끝난 뒤 첫 화면으로 보낸다. */
+  onDone: () => void;
+}): JSX.Element {
   const [confirm, setConfirm] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -86,14 +96,7 @@ export function DeleteAccountDialog({ onClose }: { onClose: () => void }): JSX.E
             >
               처리 번호 · {jobId}
             </p>
-            <ActionButton
-              onClick={() => {
-                // 세션이 끝났으므로 첫 화면부터 다시 시작한다.
-                window.location.replace('/');
-              }}
-            >
-              확인
-            </ActionButton>
+            <ActionButton onClick={onDone}>확인</ActionButton>
           </>
         ) : (
           <>

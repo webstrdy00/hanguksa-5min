@@ -152,7 +152,16 @@ export function SettingsScreen(): JSX.Element {
 
       <div style={{ height: 32 }} />
 
-      {deleteOpen && <DeleteAccountDialog onClose={() => setDeleteOpen(false)} />}
+      {deleteOpen && (
+        <DeleteAccountDialog
+          onClose={() => setDeleteOpen(false)}
+          onDone={() => {
+            setDeleteOpen(false);
+            // 세션이 끝나 첫 화면으로 돌아간다. AuthProvider 가 다시 bootstrap 한다.
+            void navigate('/', { replace: true });
+          }}
+        />
+      )}
     </Screen>
   );
 }

@@ -1,0 +1,31 @@
+# 이미지에 들어가면 안 되는 것들.
+# 특히 인증서와 .env 는 절대 굽지 않는다. 런타임 주입만 쓴다 (공통 06 §6).
+
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+!**/.env.example
+
+# 인증서 / 키
+**/certs/
+**/*.pem
+**/*.key
+**/*.crt
+**/*.p12
+**/*.pfx
+
+# 개발 산출물
+frontend/
+assets/
+docs/
+.git/
+.github/
+**/*.test.ts
+**/*.db.test.ts
+**/coverage/
+**/.vitest/
+
+# 문서
+*.md
+!README.md

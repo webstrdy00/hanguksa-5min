@@ -1,0 +1,47 @@
+# Railway 배포 설정
+#
+# 사용법
+#   1) Railway 프로젝트에 이 저장소를 연결한다.
+#   2) 서비스 Root Directory 를 저장소 루트로 둔다(Dockerfile 이 워크스페이스를 참조한다).
+#   3) 아래 §환경변수를 Railway Variables 에 등록한다.
+#   4) PostgreSQL 플러그인을 추가하면 DATABASE_URL 이 자동 주입된다.
+#
+# 도메인은 Railway 가 <service>.up.railway.app 으로 HTTPS 를 제공한다.
+# 별도 도메인 구입이 필요 없다 (AGENTS.md §11-B).
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "backend/Dockerfile"
+
+[deploy]
+# 기동 시 migration 을 적용하고 실패하면 컨테이너를 띄우지 않는다.
+startCommand = "sh -c 'node --env-file-if-exists=.env src/db/migrate.ts && node dist/index.js'"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+# 배포 중 순단을 줄인다.
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+# ---------------------------------------------------------------------------
+# 환경변수 (Railway Variables 에 등록)
+# ---------------------------------------------------------------------------
+# 필수
+#   APP_ENV=production
+#   NODE_ENV=production
+#   APP_NAME=hanguksa5min
+#   HOST=0.0.0.0
+#   PORT=8080                       ← Railway 가 $PORT 를 주면 그 값을 쓴다
+#   DATABASE_URL=...                ← PostgreSQL 플러그인이 자동 주입
+#   INTERNAL_TOKEN_SECRET=<32자 이상 랜덤>
+#   ADMIN_TOKEN_SECRET=<32자 이상 랜덤, INTERNAL 과 다른 값>
+#   SERVER_PEPPER=<32자 이상 랜덤>
+#
+# 인증서 발급 후
+#   IDENTITY_PROVIDER=toss
+#   AIT_MTLS_CERT_PATH=/app/secrets/ait-client.crt
+#   AIT_MTLS_KEY_PATH=/app/secrets/ait-client.key
+#   AIT_USER_KEY_VERIFY_URL=https://apps-in-toss-api.toss.im/api-partner/v1/apps-in-toss/users/anon-key/verify
+#
+# ⚠ 인증서는 Variables 가 아니라 파일로 마운트한다.
+#   Railway 는 Config-as-Code 의 파일 마운트 또는 볼륨을 쓴다.
+#   secret 값을 이미지에 굽거나 저장소에 커밋하지 않는다 (공통 06 §6).

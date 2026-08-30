@@ -17,7 +17,8 @@ import { adminUsers } from '../db/schema/admin.ts';
  * 터미널 히스토리에 남지 않도록 주의한다.
  */
 async function main(): Promise<void> {
-  const email = process.argv[2];
+  // pnpm 은 `--` 구분자를 그대로 넘긴다. 인자로 오인하지 않도록 걸러낸다.
+  const email = process.argv.slice(2).find((arg) => arg !== '--');
 
   if (email == null || email.length === 0) {
     throw new Error('사용법: admin:token <관리자 이메일>');
