@@ -120,7 +120,7 @@ export function StudyScreen(): JSX.Element {
           const correctIndex = answer?.correctIndex ?? current.correctIndex;
           const explanation = answer?.explanation ?? current.explanation;
           const isCorrect = answer?.isCorrect ?? current.isCorrect;
-          const chosen = answer != null ? selected : (current.selectedIndex ?? null);
+          const chosen = current.answered ? (current.selectedIndex ?? selected) : selected;
 
           return (
             <>
@@ -303,7 +303,7 @@ export function StudyScreen(): JSX.Element {
                   <ActionButton onClick={goNext}>다음 문제</ActionButton>
                 ) : showExplanation ? (
                   <ActionButton onClick={goNext}>
-                    {remaining <= 1 ? '결과 보기' : '다음 문제'}
+                    {remaining === 0 ? '결과 보기' : '다음 문제'}
                   </ActionButton>
                 ) : (
                   <ActionButton

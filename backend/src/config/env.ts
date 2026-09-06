@@ -13,7 +13,7 @@ import { z } from 'zod';
  * 오류 출력에 값 자체는 절대 찍지 않는다.
  */
 
-/** appName은 `https://<appName>.web.tossmini.com` 서브도메인으로 쓰인다. */
+/** appName은 `https://<appName>.apps.tossmini.com` 서브도메인으로 쓰인다. */
 const dnsLabel = z
   .string()
   .min(1)

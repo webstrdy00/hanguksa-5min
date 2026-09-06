@@ -7,13 +7,13 @@ import type { AppInstance } from './types.ts';
 describe('tossMiniAppOrigins', () => {
   it('appName 에서 실서비스/QR 테스트 origin 을 파생한다 (SDK 3.x CORS 규칙)', () => {
     expect(tossMiniAppOrigins('hanguksa5min')).toEqual([
-      'https://hanguksa5min.web.tossmini.com',
-      'https://hanguksa5min.private-web.tossmini.com',
+      'https://hanguksa5min.apps.tossmini.com',
+      'https://hanguksa5min.private-apps.tossmini.com',
     ]);
   });
 
   it('테스트 환경에서는 허용 목록에 앱인토스 origin 이 포함된다', () => {
-    expect(resolveAllowedOrigins()).toContain('https://hanguksa5min.web.tossmini.com');
+    expect(resolveAllowedOrigins()).toContain('https://hanguksa5min.apps.tossmini.com');
   });
 });
 
@@ -27,6 +27,40 @@ describe('보안 헤더와 오류 응답', () => {
 
   afterAll(async () => {
     await app.close();
+  });
+
+  it.each([
+    'https://hanguksa5min.apps.tossmini.com',
+    'https://hanguksa5min.private-apps.tossmini.com',
+  ])('새 미니앱 주소 %s 의 인증 사전 요청을 허용한다', async (origin) => {
+    const response = await app.inject({
+      method: 'OPTIONS',
+      url: '/v1/auth/bootstrap',
+      headers: {
+        origin,
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type,authorization,idempotency-key',
+      },
+    });
+    expect(response.statusCode).toBe(204);
+    expect(response.headers['access-control-allow-origin']).toBe(origin);
+    expect(response.headers['access-control-allow-headers']).toBe(
+      'Content-Type, Authorization, Idempotency-Key',
+    );
+    expect(response.headers['access-control-allow-credentials']).toBeUndefined();
+  });
+
+  it.each([
+    'https://other-app.apps.tossmini.com',
+    'https://hanguksa5min.apps.tossmini.com.attacker.example',
+    'http://hanguksa5min.apps.tossmini.com',
+  ])('다른 앱이나 위장 주소 %s 에 사전 요청을 허용하지 않는다', async (origin) => {
+    const response = await app.inject({
+      method: 'OPTIONS',
+      url: '/v1/auth/bootstrap',
+      headers: { origin, 'access-control-request-method': 'POST' },
+    });
+    expect(response.headers['access-control-allow-origin']).toBeUndefined();
   });
 
   it('health 는 200 을 돌려준다', async () => {
@@ -101,11 +135,11 @@ describe('보안 헤더와 오류 응답', () => {
     const allowed = await app.inject({
       method: 'GET',
       url: '/health',
-      headers: { origin: 'https://hanguksa5min.web.tossmini.com' },
+      headers: { origin: 'https://hanguksa5min.apps.tossmini.com' },
     });
 
     expect(allowed.headers['access-control-allow-origin']).toBe(
-      'https://hanguksa5min.web.tossmini.com',
+      'https://hanguksa5min.apps.tossmini.com',
     );
   });
 
@@ -123,7 +157,7 @@ describe('보안 헤더와 오류 응답', () => {
     const response = await app.inject({
       method: 'GET',
       url: '/health',
-      headers: { origin: 'https://hanguksa5min.web.tossmini.com' },
+      headers: { origin: 'https://hanguksa5min.apps.tossmini.com' },
     });
 
     expect(response.headers['access-control-allow-credentials']).toBeUndefined();

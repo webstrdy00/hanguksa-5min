@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AnswerResponse, SessionResponse } from '../api/types.ts';
 import { StudyScreen } from './StudyScreen.tsx';
@@ -62,7 +62,10 @@ function renderScreen() {
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <StudyScreen />
+        <Routes>
+          <Route path="/" element={<StudyScreen />} />
+          <Route path="/result" element={<h1>테스트 결과 화면</h1>} />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -92,6 +95,157 @@ afterEach(() => {
 });
 
 describe('StudyScreen', () => {
+  it('미답 문항이 하나 남아 있으면 결과가 아니라 다음 문제로 안내한다', async () => {
+    mockFetch(() => ({
+      ...session,
+      items: session.items.map((item, index) =>
+        index === 4 ? item : { ...item, answered: true, selectedIndex: 1, correctIndex: 0 },
+      ),
+    }));
+    renderScreen();
+    await screen.findByText('문항 0 입니다');
+    expect(screen.queryByRole('button', { name: '결과 보기' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: '다음 문제' }));
+    expect(await screen.findByText('문항 4 입니다')).toBeTruthy();
+  });
+
+  it('마지막 답안 저장 후 세션 재조회가 지연돼도 결과로 이동한다', async () => {
+    let answered = false;
+    vi.stubGlobal('fetch', (input: string) => {
+      if (String(input).includes('/answer')) {
+        answered = true;
+        return Promise.resolve(Response.json({ ...answerResponse, answeredCount: 5 }));
+      }
+      // MOCK: 답안 저장은 성공했지만 세션 재조회 응답은 아직 도착하지 않았다.
+      if (answered) return new Promise<Response>(() => {});
+      return Promise.resolve(
+        Response.json({
+          ...session,
+          items: session.items.map((item, index) =>
+            index === 0 ? item : { ...item, answered: true, selectedIndex: 1, correctIndex: 0 },
+          ),
+        }),
+      );
+    });
+    renderScreen();
+    await screen.findByText('문항 0 입니다');
+    await userEvent.click(screen.getAllByRole('radio')[1]!);
+    await userEvent.click(screen.getByRole('button', { name: '답 제출하기' }));
+    await screen.findByText('정답 근거 해설입니다');
+    await userEvent.click(screen.getByRole('button', { name: '결과 보기' }));
+    expect(await screen.findByRole('heading', { name: '테스트 결과 화면' })).toBeTruthy();
+  });
+
+  it('채점이 지연되는 동안 연타해도 답안을 한 번만 전송한다', async () => {
+    const requests: string[] = [];
+    let respond: ((response: Response) => void) | undefined;
+    vi.stubGlobal('fetch', (input: string) => {
+      if (!String(input).includes('/answer')) return Promise.resolve(Response.json(session));
+      requests.push(String(input));
+      return new Promise<Response>((resolve) => {
+        respond = resolve;
+      });
+    });
+    renderScreen();
+    await screen.findByText('문항 0 입니다');
+    await userEvent.click(screen.getAllByRole('radio')[1]!);
+    await userEvent.dblClick(screen.getByRole('button', { name: '답 제출하기' }));
+    expect(requests).toHaveLength(1);
+    expect(screen.getByRole('button', { name: '채점하고 있어요' }).hasAttribute('disabled')).toBe(
+      true,
+    );
+    await userEvent.click(screen.getAllByRole('radio')[2]!);
+    expect(screen.getAllByRole<HTMLInputElement>('radio')[1]!.checked).toBe(true);
+    respond!(Response.json(answerResponse));
+    await screen.findByText('정답 근거 해설입니다');
+  });
+
+  it('답안 전송 실패 후 선택을 보존하고 같은 답으로 재시도한다', async () => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal('fetch', (input: string, init?: RequestInit) => {
+      if (!String(input).includes('/answer')) return Promise.resolve(Response.json(session));
+      bodies.push(JSON.parse(String(init?.body)));
+      if (bodies.length === 1) return Promise.reject(new Error('MOCK offline'));
+      return Promise.resolve(Response.json(answerResponse));
+    });
+    renderScreen();
+    await screen.findByText('문항 0 입니다');
+    await userEvent.click(screen.getAllByRole('radio')[2]!);
+    await userEvent.click(screen.getByRole('button', { name: '답 제출하기' }));
+    await screen.findByRole('alert');
+    expect(screen.getAllByRole<HTMLInputElement>('radio')[2]!.checked).toBe(true);
+    expect(bodies).toHaveLength(1);
+    await userEvent.click(screen.getByRole('button', { name: '다시 시도' }));
+    await userEvent.click(screen.getByRole('button', { name: '답 제출하기' }));
+    await screen.findByText('정답 근거 해설입니다');
+    expect(bodies).toEqual([
+      { questionRevisionId: 'rev-0', selectedIndex: 2 },
+      { questionRevisionId: 'rev-0', selectedIndex: 2 },
+    ]);
+  });
+
+  it('다섯 문항 모두 제출 전에 선택 표시를 갱신하고 다음 문항에서 초기화한다', async () => {
+    const state = structuredClone(session);
+    mockFetch((url, init) => {
+      if (!url.includes('/answer')) return state;
+      const body = JSON.parse(String(init?.body)) as {
+        questionRevisionId: string;
+        selectedIndex: number;
+      };
+      const item = state.items.find(
+        (entry) => entry.questionRevisionId === body.questionRevisionId,
+      )!;
+      Object.assign(item, {
+        answered: true,
+        selectedIndex: body.selectedIndex,
+        correctIndex: 0,
+        isCorrect: false,
+        explanation: answerResponse.explanation,
+      });
+      return answerResponse;
+    });
+    renderScreen();
+
+    for (let index = 0; index < 5; index++) {
+      await screen.findByText(`문항 ${index} 입니다`);
+      const choices = screen.getAllByRole<HTMLInputElement>('radio');
+      expect(choices.every((choice) => !choice.checked)).toBe(true);
+      expect(screen.getByRole('button', { name: '답 제출하기' }).hasAttribute('disabled')).toBe(
+        true,
+      );
+      await userEvent.click(choices[1]!);
+      expect(choices[1]!.checked).toBe(true);
+      await userEvent.click(choices[2]!);
+      expect(choices[1]!.checked).toBe(false);
+      expect(choices[2]!.checked).toBe(true);
+      await userEvent.click(screen.getByRole('button', { name: '답 제출하기' }));
+      await screen.findByText('내 선택');
+      expect(choices[2]!.checked).toBe(true);
+      if (index < 4) {
+        await userEvent.click(screen.getByRole('button', { name: /다음 문제|결과 보기/ }));
+      }
+    }
+  });
+
+  it('재진입한 해설에서는 서버에 저장된 선택을 표시한다', async () => {
+    mockFetch(() => ({
+      ...session,
+      items: [
+        makeItem(0, {
+          answered: true,
+          selectedIndex: 3,
+          correctIndex: 0,
+          isCorrect: false,
+          explanation: answerResponse.explanation,
+        }),
+        ...session.items.slice(1),
+      ],
+    }));
+    renderScreen();
+    await screen.findByText('내 선택');
+    expect(screen.getAllByRole<HTMLInputElement>('radio')[3]!.checked).toBe(true);
+  });
+
   it('풀기 전에는 정답과 해설을 보여주지 않는다', async () => {
     mockFetch(() => session);
     renderScreen();

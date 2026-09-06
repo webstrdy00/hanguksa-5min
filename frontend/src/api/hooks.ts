@@ -55,7 +55,12 @@ export function useUpdateGoal(): UseMutationResult<
   return useMutation({
     mutationFn: (body) =>
       request<{ goal: ExamsResponse['goal'] }>('/v1/profile/goal', { method: 'PATCH', body }),
-    onSuccess: () => {
+    onSuccess: ({ goal }) => {
+      // 홈으로 이동하기 전에 서버가 확정한 목표를 반영한다.
+      // 재조회만 시작하면 진입 라우트가 이전 목표를 보고 온보딩으로 되돌릴 수 있다.
+      client.setQueryData<ExamsResponse>(queryKeys.exams, (previous) =>
+        previous == null ? previous : { ...previous, goal },
+      );
       void client.invalidateQueries({ queryKey: queryKeys.exams });
     },
     retry: false,
@@ -93,7 +98,26 @@ export function useSubmitAnswer(
       if (sessionId == null) throw new Error('세션이 없습니다.');
       return request<AnswerResponse>(`/v1/sessions/${sessionId}/answer`, { method: 'POST', body });
     },
-    onSuccess: () => {
+    onSuccess: (answer, submitted) => {
+      // 서버의 저장 성공을 즉시 반영해 재조회 중에도 같은 문항으로 되돌아가지 않는다.
+      client.setQueryData<SessionResponse>(queryKeys.session, (previous) => {
+        if (previous == null || previous.session.id !== sessionId) return previous;
+        return {
+          ...previous,
+          items: previous.items.map((item) =>
+            item.questionRevisionId === submitted.questionRevisionId
+              ? {
+                  ...item,
+                  answered: true,
+                  selectedIndex: submitted.selectedIndex,
+                  correctIndex: answer.correctIndex,
+                  isCorrect: answer.isCorrect,
+                  explanation: answer.explanation,
+                }
+              : item,
+          ),
+        };
+      });
       void client.invalidateQueries({ queryKey: queryKeys.session });
     },
     // 답안은 자동 재시도하지 않는다. 중복 제출로 보이지 않게 사용자가 결정한다.

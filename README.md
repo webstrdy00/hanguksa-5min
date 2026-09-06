@@ -154,10 +154,10 @@ pnpm --filter @hanguksa/backend admin:token dev-reviewer@example.test
 
 - 설정 파일은 `frontend/apps-in-toss.config.ts` 입니다 (SDK 3.x). `granite.config.ts` 는 쓰지 않습니다.
 - `appName` 은 콘솔 등록 후 **수정할 수 없고**, 서버 CORS 허용 목록의 원본입니다.
-  - `https://<appName>.web.tossmini.com` (실서비스)
-  - `https://<appName>.private-web.tossmini.com` (콘솔 QR 테스트)
+  - `https://<appName>.apps.tossmini.com` (실서비스, 콘솔의 2026-08-25 주소 변경 안내 반영)
+  - `https://<appName>.private-apps.tossmini.com` (콘솔 QR 테스트)
 - `appName` 은 **`hanguksa5min` 으로 확정**했습니다(2026-08-29). 콘솔 등록 후에는 변경할 수 없습니다.
-- 딥링크 `intoss://hanguksa5min`, 서비스 URL `https://hanguksa5min.web.tossmini.com`, mTLS 인증서 CN 이 모두 이 값을 따릅니다.
+- 딥링크 `intoss://hanguksa5min`, 서비스 URL `https://hanguksa5min.apps.tossmini.com`, mTLS 인증서 CN 이 모두 이 값을 따릅니다.
 - 한글 서비스명(앱 이름)은 콘솔에서 나중에 변경할 수 있으므로 상표 확인과 분리해 진행합니다.
 - `pnpm build` 는 `vite build && ait build` 를 실행해 `.ait` 번들을 만듭니다.
 

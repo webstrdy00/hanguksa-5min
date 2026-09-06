@@ -11,12 +11,12 @@ import type { AppInstance } from './types.ts';
  * - 민감 응답은 no-store 로 CDN/브라우저 캐시에 남지 않게 한다.
  *   이 API 는 전부 사용자별 동적 응답이므로 기본값을 no-store 로 둔다.
  *
- * CORS origin 은 SDK 3.x 문서 기준으로 appName 에서 파생된다.
- *   https://<appName>.web.tossmini.com          실서비스
- *   https://<appName>.private-web.tossmini.com  콘솔 QR 테스트
+ * CORS origin 은 콘솔의 2026-08-25 주소 변경 안내 기준으로 appName 에서 파생된다.
+ *   https://<appName>.apps.tossmini.com          실서비스
+ *   https://<appName>.private-apps.tossmini.com  콘솔 QR 테스트
  */
 export function tossMiniAppOrigins(appName: string): readonly string[] {
-  return [`https://${appName}.web.tossmini.com`, `https://${appName}.private-web.tossmini.com`];
+  return [`https://${appName}.apps.tossmini.com`, `https://${appName}.private-apps.tossmini.com`];
 }
 
 export function resolveAllowedOrigins(): readonly string[] {

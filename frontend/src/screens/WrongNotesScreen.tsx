@@ -227,8 +227,31 @@ function WrongNoteCard({ item }: { item: WrongNoteItem }): JSX.Element {
                 style={{
                   fontSize: 14,
                   lineHeight: 1.6,
-                  color: index === item.correctIndex ? '#1b64da' : '#4e5968',
-                  fontWeight: index === item.correctIndex ? 700 : 400,
+                  padding: '10px 12px',
+                  marginBottom: 8,
+                  borderRadius: 10,
+                  border: `1px solid ${
+                    index === item.correctIndex
+                      ? '#1b64da'
+                      : index === item.selectedIndex
+                        ? '#c23934'
+                        : '#e5e8eb'
+                  }`,
+                  background:
+                    index === item.correctIndex
+                      ? '#f0f6ff'
+                      : index === item.selectedIndex
+                        ? '#fff5f5'
+                        : '#fff',
+                  color:
+                    index === item.correctIndex
+                      ? '#1b64da'
+                      : index === item.selectedIndex
+                        ? '#c23934'
+                        : '#4e5968',
+                  fontWeight:
+                    index === item.correctIndex || index === item.selectedIndex ? 700 : 400,
+                  overflowWrap: 'anywhere',
                 }}
               >
                 {choice}

@@ -91,3 +91,4 @@ content/*-review.html
 
 # Neon 접속 정보 임시 파일. 커밋 금지.
 backend/.neon-url.txt
+backend/.admtok.txt
