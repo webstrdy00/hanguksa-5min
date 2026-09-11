@@ -114,6 +114,19 @@ jobs:
       - name: Install (lockfile 고정)
         run: pnpm install --frozen-lockfile
 
+      # migration/seed 도 공통 env 검증을 거친다. 운영 secret 대신 매 실행 임시 키를 주입한다.
+      - name: CI 전용 임시 인증 키 생성
+        run: |
+          node --input-type=module <<'NODE'
+          import { randomBytes } from 'node:crypto';
+          import { appendFileSync } from 'node:fs';
+          for (const name of ['SERVER_PEPPER', 'INTERNAL_TOKEN_SECRET', 'ADMIN_TOKEN_SECRET']) {
+            const value = randomBytes(32).toString('hex');
+            console.log(`::add-mask::${value}`);
+            appendFileSync(process.env.GITHUB_ENV, `${name}=${value}\n`);
+          }
+          NODE
+
       - name: Migration 적용
         run: pnpm db:migrate
         env:
