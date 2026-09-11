@@ -1,49 +1,94 @@
-/logs
-/image
-/.serena
-/issues
-/.omc
-/.omx
+# ---------------------------------------------------------------------------
+# 로컬 에이전트/도구 (개발 규칙 파일. 팀 공유가 필요하면 이 블록을 해제한다)
+# ---------------------------------------------------------------------------
+.claude/
+CLAUDE.md
+CLAUDE-*.md
+AGENTS.md
+GOALS.md
+.gjc/
 .codex/
-security-report/
-.npm-cache/
+.serena/
+.omc/
+.omx/
+
+# ---------------------------------------------------------------------------
+# 기획 문서 (원본은 로컬 보관. 공유가 필요하면 이 블록을 해제한다)
+# ---------------------------------------------------------------------------
 docs/*
 !docs/DEPLOYMENT.md
 !docs/IMPLEMENTATION_STATUS.md
 
-.claude/
-CLAUDE.md
-CLAUDE-*.md
-
-AGENTS.md
-GOALS.md
-.gjc/
-
-/backend/gcp-key.json
-/backend/*gcp-key*.json
-/backend/.env.production.example
-
-# Python
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-.venv/
-
-# Node / frontend tooling
+# ---------------------------------------------------------------------------
+# Node / 빌드 산출물
+# ---------------------------------------------------------------------------
 node_modules/
-.next/
 dist/
+dist-ssr/
 build/
 *.tsbuildinfo
-playwright-report/
-test-results/
+.npm-cache/
+*.local
 
-# Local secrets
+# 앱인토스 번들
+*.ait
+
+# ---------------------------------------------------------------------------
+# 로그 / 테스트 산출물
+# ---------------------------------------------------------------------------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+coverage/
+test-results/
+security-report/
+
+# ---------------------------------------------------------------------------
+# 시크릿 (공통 04 §2, 공통 06 §6: 코드 저장소에 절대 포함하지 않는다)
+# ---------------------------------------------------------------------------
 .env
 .env.*
 !.env.example
-!.env.staging.example
-!backend/.env.example
-!frontend/.env.example
+!**/.env.example
+secrets/
+certs/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# ---------------------------------------------------------------------------
+# 에디터 / OS
+# ---------------------------------------------------------------------------
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---------------------------------------------------------------------------
+# 임시
+# ---------------------------------------------------------------------------
+.tmp-inspect/
+
+# 콘솔 등록용 자산(스크린샷·로고). 앱 번들에 포함하지 않는다.
+assets/console/
+.factcache/
+factcheck-report.json
+
+# 배포용 시크릿 임시 파일. 절대 커밋 금지.
+railway-secrets.txt
+
+# 문항 원본(content/all-300.json)만 버전 관리한다.
+# 아래는 재생성되거나 이미 반영이 끝난 파생물이라 커밋하지 않는다.
+# 배치 원본을 남겨 두면 통합본과 순서가 어긋나 원본으로 착각할 수 있다.
+content/archive/
+content/*-review.html
+
+# Neon 접속 정보 임시 파일. 커밋 금지.
+backend/.neon-url.txt
+backend/.admtok.txt

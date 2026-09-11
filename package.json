@@ -1,0 +1,41 @@
+{
+  "name": "hanguksa-5min",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.10.0",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev:frontend": "pnpm --filter @hanguksa/frontend dev",
+    "dev:backend": "pnpm --filter @hanguksa/backend dev",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check:app-name": "node scripts/check-app-name.mjs",
+    "check:secrets": "secretlint --secretlintrc .secretlintrc.json --maskSecrets \"**/*\"",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:generate": "pnpm --filter @hanguksa/backend db:generate",
+    "db:migrate": "pnpm --filter @hanguksa/backend db:migrate",
+    "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm check:app-name && pnpm check:secrets",
+    "test:db": "pnpm --filter @hanguksa/backend test:db",
+    "db:seed": "pnpm --filter @hanguksa/backend db:seed"
+  },
+  "devDependencies": {
+    "@secretlint/secretlint-rule-preset-recommend": "13.0.4",
+    "prettier": "3.9.6",
+    "secretlint": "13.0.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "cloudflared",
+      "esbuild",
+      "protobufjs"
+    ]
+  }
+}

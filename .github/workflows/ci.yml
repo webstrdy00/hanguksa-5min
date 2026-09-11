@@ -1,0 +1,158 @@
+name: CI
+
+# 공통 06 §5 CI/CD P0
+# PR: format/lint, TypeScript typecheck, unit, secret scan, dependency audit
+# Build: lockfile 재현 빌드, SDK major 3 고정, apps-in-toss.config.ts 검증
+# DB: migration 파일 Git 관리 + 실제 PostgreSQL 적용 확인
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  verify:
+    name: lint / typecheck / test / secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install (lockfile 고정)
+        run: pnpm install --frozen-lockfile
+
+      - name: Format
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit test
+        run: pnpm test
+
+      - name: appName 일관성 (콘솔/config/CORS)
+        run: pnpm check:app-name
+
+      - name: Secret scan
+        run: pnpm check:secrets
+
+      - name: Dependency audit
+        run: pnpm audit --audit-level=high
+
+  build:
+    name: build (SDK major 3 고정)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install (lockfile 고정)
+        run: pnpm install --frozen-lockfile
+
+      - name: SDK major 버전 확인
+        run: |
+          version=$(node -p "require('./frontend/package.json').dependencies['@apps-in-toss/web-framework']")
+          echo "web-framework=$version"
+          case "$version" in
+            3.*) echo "SDK major 3 확인" ;;
+            *) echo "::error::@apps-in-toss/web-framework 는 major 3 으로 고정해야 합니다 (현재: $version)"; exit 1 ;;
+          esac
+
+      - name: Build
+        run: pnpm build
+
+  migrations:
+    name: DB migration 적용
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+          TZ: UTC
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install (lockfile 고정)
+        run: pnpm install --frozen-lockfile
+
+      # migration/seed 도 공통 env 검증을 거친다. 운영 secret 대신 매 실행 임시 키를 주입한다.
+      - name: CI 전용 임시 인증 키 생성
+        run: |
+          node --input-type=module <<'NODE'
+          import { randomBytes } from 'node:crypto';
+          import { appendFileSync } from 'node:fs';
+          for (const name of ['SERVER_PEPPER', 'INTERNAL_TOKEN_SECRET', 'ADMIN_TOKEN_SECRET']) {
+            const value = randomBytes(32).toString('hex');
+            console.log(`::add-mask::${value}`);
+            appendFileSync(process.env.GITHUB_ENV, `${name}=${value}\n`);
+          }
+          NODE
+
+      - name: Migration 적용
+        run: pnpm db:migrate
+        env:
+          APP_NAME: hanguksa5min
+          APP_ENV: dev
+          DATABASE_URL: postgres://ci:ci@127.0.0.1:5432/ci
+
+      - name: DB 제약 통합 테스트
+        run: pnpm test:db
+        env:
+          APP_NAME: hanguksa5min
+          APP_ENV: dev
+          DATABASE_URL: postgres://ci:ci@127.0.0.1:5432/ci
+
+      - name: 개발용 seed 실행 확인
+        run: pnpm db:seed
+        env:
+          APP_NAME: hanguksa5min
+          APP_ENV: dev
+          DATABASE_URL: postgres://ci:ci@127.0.0.1:5432/ci
+
+      - name: 커밋되지 않은 migration 이 없는지 확인
+        run: |
+          pnpm db:generate
+          if [ -n "$(git status --porcelain backend/migrations)" ]; then
+            echo "::error::스키마와 migration 파일이 어긋납니다. pnpm db:generate 결과를 커밋하세요."
+            git status --porcelain backend/migrations
+            exit 1
+          fi
