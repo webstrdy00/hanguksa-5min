@@ -1,7 +1,7 @@
 import { Suspense, lazy } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { useExams } from './api/hooks.ts';
-import { useAuth } from './auth/AuthProvider.tsx';
+import { useAuth } from './auth/context.ts';
 import {
   ActionButton,
   ErrorState,
@@ -69,7 +69,7 @@ export default function App(): JSX.Element {
         <Section>
           <h1 style={{ fontSize: 20, fontWeight: 700, marginTop: 40 }}>지금은 시작할 수 없어요</h1>
         </Section>
-        <ErrorState error={new Error(auth.error?.message ?? '')} />
+        <ErrorState error={auth.error} />
         <Section>
           <ActionButton onClick={auth.retry}>다시 시도</ActionButton>
         </Section>

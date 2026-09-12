@@ -32,6 +32,9 @@
     "secretlint": "13.0.4"
   },
   "pnpm": {
+    "overrides": {
+      "@esbuild-kit/core-utils>esbuild": "0.25.12"
+    },
     "onlyBuiltDependencies": [
       "cloudflared",
       "esbuild",
