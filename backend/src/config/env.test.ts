@@ -19,6 +19,24 @@ const baseEnv = {
 };
 
 describe('loadEnv', () => {
+  it.each([
+    '',
+    'http://discord.com/api/webhooks/123/MOCK',
+    'https://discord.com.evil.test/api/webhooks/123/MOCK',
+    'https://discord.com/api/webhooks/123/MOCK?wait=true',
+  ])('잘못된 Discord 목적지를 거부하고 비밀값을 오류에 포함하지 않는다', (value) => {
+    expect(() => loadEnv({ ...baseEnv, DISCORD_ALERT_WEBHOOK_URL: value })).toThrow(
+      /DISCORD_ALERT_WEBHOOK_URL/,
+    );
+    if (value) {
+      try {
+        loadEnv({ ...baseEnv, DISCORD_ALERT_WEBHOOK_URL: value });
+      } catch (error) {
+        expect(String(error)).not.toContain(value);
+      }
+    }
+  });
+
   it('필수 값이 있으면 기본값과 함께 통과한다', () => {
     const env = loadEnv({ ...baseEnv });
 

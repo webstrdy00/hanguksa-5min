@@ -3,8 +3,9 @@ import { buildApp } from './app.ts';
 import { env } from './config/env.ts';
 import { closeDb } from './db/client.ts';
 import { startDeletionWorker } from './jobs/deletion-worker.ts';
+import { createDeletionAlerts, createMonitoredDeletionBatch } from './jobs/deletion-alerts.ts';
 import { logger } from './observability/logger.ts';
-import { runPendingDeletionJobs } from './services/deletion.ts';
+import { getDeletionQueueHealth, runPendingDeletionJobs } from './services/deletion.ts';
 
 /**
  * 서버 진입점.
@@ -41,9 +42,16 @@ async function main(): Promise<void> {
 
   await app.listen({ host: env.HOST, port: env.PORT });
   deletionWorker.stop = startDeletionWorker(
-    () => runPendingDeletionJobs(),
+    createMonitoredDeletionBatch(
+      () => runPendingDeletionJobs(),
+      () => getDeletionQueueHealth(),
+      createDeletionAlerts(env.DISCORD_ALERT_WEBHOOK_URL, env.APP_ENV, () =>
+        logger.error('deletion_alert_delivery_failed'),
+      ),
+    ),
     () => logger.error('deletion_worker_failed'),
   );
+  logger.info({ enabled: env.DISCORD_ALERT_WEBHOOK_URL != null }, 'deletion_alerts_configured');
   logger.info({ host: env.HOST, port: env.PORT }, 'server_started');
 }
 

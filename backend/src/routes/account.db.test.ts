@@ -11,7 +11,7 @@ import {
 } from '../db/test-helpers.ts';
 import type { AppInstance } from '../http/types.ts';
 import { startDeletionWorker } from '../jobs/deletion-worker.ts';
-import { runPendingDeletionJobs } from '../services/deletion.ts';
+import { getDeletionQueueHealth, runPendingDeletionJobs } from '../services/deletion.ts';
 
 /**
  * 계정 삭제 통합 테스트 (공통 04 §5, 09 §6, 하드게이트 P0).
@@ -235,6 +235,25 @@ describe('DELETE /v1/account', () => {
 });
 
 describe('삭제 이행 배치 (하드게이트 P0: 데이터 맵 추적)', () => {
+  it('큐 감시는 15분 경계를 포함하고 완료된 작업은 제외한다', async () => {
+    await app.inject({
+      method: 'DELETE',
+      url: '/v1/account',
+      headers: auth(),
+      payload: { confirm: '삭제' },
+    });
+    const now = new Date('2026-09-13T00:00:00Z');
+    const cutoff = new Date(now.getTime() - 15 * 60_000);
+    await sql`update deletion_jobs set requested_at = ${new Date(cutoff.getTime() + 1)}, status = 'requested'`;
+    expect(await getDeletionQueueHealth(now)).toEqual({ failed: 0, overdue: 0 });
+    await sql`update deletion_jobs set requested_at = ${cutoff}, status = 'failed'`;
+    expect(await getDeletionQueueHealth(now)).toEqual({ failed: 1, overdue: 1 });
+    await sql`update deletion_jobs set status = 'in_progress'`;
+    expect(await getDeletionQueueHealth(now)).toEqual({ failed: 0, overdue: 1 });
+    expect(await runPendingDeletionJobs(50, now)).toBe(1);
+    expect(await getDeletionQueueHealth(now)).toEqual({ failed: 0, overdue: 0 });
+  });
+
   it('서버 워커를 시작하면 대기 중인 삭제 요청이 실제로 처리된다', async () => {
     await buildLearningHistory();
     await app.inject({
