@@ -93,6 +93,17 @@ it('이미 완료한 결과에 재진입해도 완료를 다시 요청하지 않
   expect(calls.filter((url) => url.includes('/complete'))).toHaveLength(0);
 });
 
+it('오답이 복습 슬롯보다 많아도 모두 내일 출제된다고 약속하지 않는다', async () => {
+  const state = makeSession(true);
+  state.session.score = 0;
+  state.items = state.items.map((item) => ({ ...item, selectedIndex: 1, isCorrect: false }));
+  vi.stubGlobal('fetch', () => Promise.resolve(Response.json(state)));
+  renderScreen();
+  await screen.findByText(/5개를 틀렸어요/);
+  expect(screen.getByText(/복습 일정에 따라 일부씩 다시 나와요/)).toBeTruthy();
+  expect(screen.queryByText(/내일 복습 문제로 다시 만나요/)).toBeNull();
+});
+
 it('완료 저장 실패를 표시하고 재시도하면 서버 결과로 회복한다', async () => {
   let requests = 0;
   const state = makeSession();

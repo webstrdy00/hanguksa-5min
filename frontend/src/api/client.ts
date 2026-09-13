@@ -35,6 +35,36 @@ export class NetworkError extends Error {
   }
 }
 
+export class RequestTimeoutError extends NetworkError {
+  constructor() {
+    super();
+    this.name = 'RequestTimeoutError';
+    this.message = '서버 응답이 늦어지고 있어요. 잠시 후 다시 시도해주세요.';
+  }
+}
+
+/** SDK 식별과 HTTP 응답(본문 수신 포함)이 무한 대기에 빠지지 않게 한다. */
+export async function withNetworkTimeout<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new RequestTimeoutError());
+      controller.abort();
+    }, 30_000);
+  });
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => operation(controller.signal)),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 let accessToken: string | null = null;
 /** 401 을 만났을 때 토큰을 다시 받아오는 함수. AuthProvider 가 주입한다. */
 let reauthorize: (() => Promise<string | null>) | null = null;
@@ -90,31 +120,40 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   if (body !== undefined) headers['content-type'] = 'application/json; charset=utf-8';
   if (authorized && accessToken != null) headers.authorization = `Bearer ${accessToken}`;
 
-  let response: Response;
   try {
-    response = await fetch(`${BASE_URL}${path}`, {
-      method,
-      headers,
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      // 쿠키를 쓰지 않는다. Bearer 토큰만 사용한다 (공통 06 §4).
-      credentials: 'omit',
+    return await withNetworkTimeout(async (signal) => {
+      let response: Response;
+      try {
+        response = await fetch(`${BASE_URL}${path}`, {
+          method,
+          headers,
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          // 쿠키를 쓰지 않는다. Bearer 토큰만 사용한다 (공통 06 §4).
+          credentials: 'omit',
+          signal,
+        });
+      } catch {
+        throw new NetworkError();
+      }
+
+      if (!response.ok) throw await parseError(response);
+      if (response.status === 204) return undefined as T;
+      return (await response.json()) as T;
     });
-  } catch {
-    throw new NetworkError();
-  }
-
-  if (response.status === 401 && authorized && retryOnUnauthorized && reauthorize != null) {
-    // 토큰이 만료됐다. refresh token 은 없으므로 bootstrap 을 다시 한다.
-    const renewed = await reauthorize();
-    if (renewed != null) {
-      return await request<T>(path, { ...options, retryOnUnauthorized: false });
+  } catch (error) {
+    if (
+      error instanceof ApiError &&
+      error.status === 401 &&
+      authorized &&
+      retryOnUnauthorized &&
+      reauthorize != null
+    ) {
+      // 토큰 갱신은 별도의 제한시간을 갖는 bootstrap 에서 처리한다.
+      const renewed = await reauthorize();
+      if (renewed != null) {
+        return await request<T>(path, { ...options, retryOnUnauthorized: false });
+      }
     }
+    throw error;
   }
-
-  if (!response.ok) {
-    throw await parseError(response);
-  }
-
-  if (response.status === 204) return undefined as T;
-  return (await response.json()) as T;
 }

@@ -6,7 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import App from '../App.tsx';
 import type { ExamsResponse } from '../api/types.ts';
 
-vi.mock('../auth/AuthProvider.tsx', () => ({
+vi.mock('../auth/context.ts', () => ({
   useAuth: () => ({ status: 'authenticated' }),
 }));
 vi.mock('./HomeScreen.tsx', () => ({

@@ -10,6 +10,7 @@ import {
   truncateAll,
 } from '../db/test-helpers.ts';
 import type { AppInstance } from '../http/types.ts';
+import { startDeletionWorker } from '../jobs/deletion-worker.ts';
 import { runPendingDeletionJobs } from '../services/deletion.ts';
 
 /**
@@ -234,6 +235,58 @@ describe('DELETE /v1/account', () => {
 });
 
 describe('삭제 이행 배치 (하드게이트 P0: 데이터 맵 추적)', () => {
+  it('서버 워커를 시작하면 대기 중인 삭제 요청이 실제로 처리된다', async () => {
+    await buildLearningHistory();
+    await app.inject({
+      method: 'DELETE',
+      url: '/v1/account',
+      headers: auth(),
+      payload: { confirm: '삭제' },
+    });
+    let failed = false;
+    const stop = startDeletionWorker(
+      () => runPendingDeletionJobs(),
+      () => {
+        failed = true;
+      },
+    );
+    // 종료는 기동 직후 시작한 작업까지 기다린다.
+    await stop();
+    expect(failed).toBe(false);
+    expect((await counts())['users']).toBe('0');
+    const [job] = await sql`select status from deletion_jobs`;
+    expect(job!.status).toBe('completed');
+  });
+
+  it('동시 워커는 같은 작업을 한 번만 완료한다', async () => {
+    await buildLearningHistory();
+    await app.inject({
+      method: 'DELETE',
+      url: '/v1/account',
+      headers: auth(),
+      payload: { confirm: '삭제' },
+    });
+    const results = await Promise.all([runPendingDeletionJobs(), runPendingDeletionJobs()]);
+    expect(results.reduce((sum, count) => sum + count, 0)).toBe(1);
+    expect((await counts())['users']).toBe('0');
+  });
+
+  it.each(['failed', 'in_progress'])('%s 작업을 재기동 후 다시 처리한다', async (status) => {
+    await buildLearningHistory();
+    await app.inject({
+      method: 'DELETE',
+      url: '/v1/account',
+      headers: auth(),
+      payload: { confirm: '삭제' },
+    });
+    await sql`update deletion_jobs set status = ${status}, last_error = 'MOCK prior failure'`;
+    expect(await runPendingDeletionJobs()).toBe(1);
+    const [job] = await sql`select status, last_error from deletion_jobs`;
+    expect(job!.status).toBe('completed');
+    expect(job!.last_error).toBeNull();
+    expect((await counts())['users']).toBe('0');
+  });
+
   it('학습 데이터를 실제로 지우고 콘텐츠 이력은 남긴다', async () => {
     await buildLearningHistory();
 

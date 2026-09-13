@@ -137,7 +137,7 @@ export function ResultScreen(): JSX.Element {
                   ) : (
                     <p style={{ margin: 0, fontSize: 15, color: '#4e5968', lineHeight: 1.6 }}>
                       {wrongEras.map((era) => ERA_LABELS[era] ?? era).join(', ')} 문항{' '}
-                      {wrongItems.length}개를 내일 복습 문제로 다시 만나요.
+                      {wrongItems.length}개를 틀렸어요. 오답은 복습 일정에 따라 일부씩 다시 나와요.
                     </p>
                   )}
                 </div>
