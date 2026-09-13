@@ -29,6 +29,14 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(8080),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   DATABASE_URL: z.string().min(1),
+  /** Discord 운영 알림 전용 secret. 원문을 로그나 클라이언트에 노출하지 않는다. */
+  DISCORD_ALERT_WEBHOOK_URL: z
+    .string()
+    .regex(
+      /^https:\/\/discord\.com\/api\/webhooks\/[0-9]+\/[A-Za-z0-9_-]+$/,
+      'Discord webhook URL 형식이 필요합니다.',
+    )
+    .optional(),
   /**
    * 로컬 개발용 추가 CORS origin (쉼표 구분).
    * production 에서는 무시한다. 운영 origin 은 APP_NAME 에서만 파생한다.

@@ -139,6 +139,22 @@ export async function runPendingDeletionJobs(limit = 50, now = new Date()): Prom
   return processed;
 }
 
+/** 개인정보 대신 집계 수치만 운영 알림으로 전달한다. */
+export async function getDeletionQueueHealth(now = new Date()): Promise<{
+  failed: number;
+  overdue: number;
+}> {
+  const cutoff = new Date(now.getTime() - 15 * 60_000);
+  const [row] = await db
+    .select({
+      failed: sql<number>`count(*) filter (where ${deletionJobs.status} = 'failed')::integer`,
+      overdue: sql<number>`count(*) filter (where ${deletionJobs.requestedAt} <= ${cutoff.toISOString()}::timestamptz)::integer`,
+    })
+    .from(deletionJobs)
+    .where(inArray(deletionJobs.status, ['requested', 'failed', 'in_progress']));
+  return { failed: row?.failed ?? 0, overdue: row?.overdue ?? 0 };
+}
+
 async function executeDeletion(jobId: string, userId: string, now: Date): Promise<boolean> {
   const steps: DeletionStepRecord[] = [];
 
