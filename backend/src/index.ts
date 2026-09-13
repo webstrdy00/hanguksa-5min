@@ -2,7 +2,9 @@ import process from 'node:process';
 import { buildApp } from './app.ts';
 import { env } from './config/env.ts';
 import { closeDb } from './db/client.ts';
+import { startDeletionWorker } from './jobs/deletion-worker.ts';
 import { logger } from './observability/logger.ts';
+import { runPendingDeletionJobs } from './services/deletion.ts';
 
 /**
  * 서버 진입점.
@@ -10,6 +12,10 @@ import { logger } from './observability/logger.ts';
  */
 async function main(): Promise<void> {
   const app = await buildApp();
+  const deletionWorker: { stop?: () => Promise<void> } = {};
+  app.addHook('onClose', async () => {
+    await deletionWorker.stop?.();
+  });
 
   const shutdown = (signal: string): void => {
     logger.info({ signal }, 'shutdown_started');
@@ -34,6 +40,10 @@ async function main(): Promise<void> {
   });
 
   await app.listen({ host: env.HOST, port: env.PORT });
+  deletionWorker.stop = startDeletionWorker(
+    () => runPendingDeletionJobs(),
+    () => logger.error('deletion_worker_failed'),
+  );
   logger.info({ host: env.HOST, port: env.PORT }, 'server_started');
 }
 

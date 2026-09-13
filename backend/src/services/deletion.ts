@@ -1,4 +1,4 @@
-import { eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { revokedFingerprint } from '../auth/fingerprint.ts';
 import { db } from '../db/client.ts';
 import { questionReports } from '../db/schema/content.ts';
@@ -108,41 +108,52 @@ export async function runPendingDeletionJobs(limit = 50, now = new Date()): Prom
   const pending = await db
     .select({ id: deletionJobs.id, subjectUserId: deletionJobs.subjectUserId })
     .from(deletionJobs)
-    .where(eq(deletionJobs.status, 'requested'))
+    .where(inArray(deletionJobs.status, ['requested', 'failed', 'in_progress']))
+    .orderBy(deletionJobs.updatedAt, deletionJobs.id)
     .limit(limit);
 
   let processed = 0;
 
   for (const job of pending) {
     try {
-      await executeDeletion(job.id, job.subjectUserId, now);
-      processed += 1;
-    } catch (error) {
+      if (await executeDeletion(job.id, job.subjectUserId, now)) processed += 1;
+    } catch {
       await db
         .update(deletionJobs)
         .set({
           status: 'failed',
-          lastError: error instanceof Error ? error.message.slice(0, 500) : 'unknown',
+          lastError: 'DELETION_EXECUTION_FAILED',
           updatedAt: new Date(),
         })
-        .where(eq(deletionJobs.id, job.id));
+        .where(
+          and(
+            eq(deletionJobs.id, job.id),
+            inArray(deletionJobs.status, ['requested', 'failed', 'in_progress']),
+          ),
+        );
 
-      logger.error({ err: error, jobId: job.id }, 'deletion_job_failed');
+      logger.error({ jobId: job.id }, 'deletion_job_failed');
     }
   }
 
   return processed;
 }
 
-async function executeDeletion(jobId: string, userId: string, now: Date): Promise<void> {
-  await db
-    .update(deletionJobs)
-    .set({ status: 'in_progress', startedAt: now, updatedAt: now })
-    .where(eq(deletionJobs.id, jobId));
-
+async function executeDeletion(jobId: string, userId: string, now: Date): Promise<boolean> {
   const steps: DeletionStepRecord[] = [];
 
-  await db.transaction(async (tx) => {
+  const processed = await db.transaction(async (tx) => {
+    // 여러 인스턴스와 재기동에서도 같은 삭제를 중복 실행하지 않는다.
+    const [job] = await tx
+      .select({ status: deletionJobs.status })
+      .from(deletionJobs)
+      .where(eq(deletionJobs.id, jobId))
+      .for('update', { skipLocked: true });
+    if (job == null || job.status === 'completed') return false;
+    await tx
+      .update(deletionJobs)
+      .set({ status: 'in_progress', startedAt: now, updatedAt: now, lastError: null })
+      .where(eq(deletionJobs.id, jobId));
     // ---------------------------------------------------------------------
     // 1. 운영 DB — 학습 개인 데이터 (09 §6: 삭제 요청 시 제거)
     // ---------------------------------------------------------------------
@@ -262,9 +273,11 @@ async function executeDeletion(jobId: string, userId: string, now: Date): Promis
         steps: sql`${JSON.stringify(steps)}::jsonb`,
       })
       .where(eq(deletionJobs.id, jobId));
+    return true;
   });
 
-  logger.info({ jobId, steps: steps.length }, 'deletion_completed');
+  if (processed) logger.info({ jobId, steps: steps.length }, 'deletion_completed');
+  return processed;
 }
 
 export interface DeletionStatusView {
