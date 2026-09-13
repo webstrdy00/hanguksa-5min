@@ -106,3 +106,22 @@ it('Discord 장애가 실제 삭제 실행을 막지 않는다', async () => {
   expect(await createMonitoredDeletionBatch(run, inspect, notify)()).toBe(2);
   expect(run).toHaveBeenCalledTimes(1);
 });
+
+it('최초 알림 전송 실패 후 큐가 정상화되어도 미전송 사실을 다시 보고한다', async () => {
+  let now = 0;
+  const send = vi
+    .fn<typeof fetch>()
+    .mockRejectedValueOnce(new Error('MOCK network down'))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }));
+  const notify = createDeletionAlerts(url, 'production', vi.fn(), send, () => now);
+  await notify(unhealthy);
+  await notify(healthy);
+  expect(send).toHaveBeenCalledTimes(1);
+  now = 5 * 60_000;
+  await notify(healthy);
+  expect(send).toHaveBeenCalledTimes(2);
+  expect(send.mock.calls[1]![1]!.body).toContain('정상화');
+  expect(send.mock.calls[1]![1]!.body).toContain('이전 알림 전송 실패');
+  await notify(healthy);
+  expect(send).toHaveBeenCalledTimes(2);
+});

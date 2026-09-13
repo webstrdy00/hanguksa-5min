@@ -13,6 +13,7 @@ export function createDeletionAlerts(
   clock: () => number = Date.now,
 ): (state: AlertState) => Promise<void> {
   let active = false;
+  let undelivered = false;
   let lastSent = -Infinity;
   let retryAfter = -Infinity;
 
@@ -20,7 +21,7 @@ export function createDeletionAlerts(
     if (webhookUrl == null) return;
     const now = clock();
     const unhealthy = state.unavailable || state.failed > 0 || state.overdue > 0;
-    if (now < retryAfter || (!unhealthy && !active)) return;
+    if (now < retryAfter || (!unhealthy && !active && !undelivered)) return;
     if (unhealthy && active && now - lastSent < 30 * 60_000) return;
 
     const content = [
@@ -28,6 +29,7 @@ export function createDeletionAlerts(
       state.unavailable
         ? '삭제 배치 또는 큐 조회 실패. 서버 로그를 확인해주세요.'
         : `실패 작업: ${state.failed}건 / 요청 후 15분 이상 미완료: ${state.overdue}건`,
+      ...(undelivered ? ['이전 알림 전송 실패 후 현재 상태를 다시 보고합니다.'] : []),
       '백업 소거 완료 여부는 별도입니다.',
     ].join('\n');
 
@@ -42,9 +44,11 @@ export function createDeletionAlerts(
       await response.body?.cancel();
       if (!response.ok) throw new Error('Discord delivery failed');
       active = unhealthy;
+      undelivered = false;
       lastSent = now;
       retryAfter = -Infinity;
     } catch {
+      undelivered = true;
       retryAfter = now + 5 * 60_000;
       onDeliveryFailure();
     }
