@@ -55,10 +55,12 @@ export async function registerSecurity(app: AppInstance): Promise<void> {
     if (
       request.method === 'OPTIONS' &&
       request.url === '/v1/auth/bootstrap' &&
-      origin != null &&
-      !allowedOrigins.includes(origin)
+      (origin == null || !allowedOrigins.includes(origin))
     ) {
-      request.log.warn({ originClass: classifyCorsOrigin(origin) }, 'auth_cors_origin_rejected');
+      request.log.info(
+        { originClass: origin == null ? 'missing' : classifyCorsOrigin(origin) },
+        'auth_cors_origin_rejected',
+      );
     }
     done();
   });
