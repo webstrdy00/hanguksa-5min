@@ -46,9 +46,9 @@ describe('보안 헤더와 오류 응답', () => {
 
     const spy = vi.spyOn(app.log, 'child').mockImplementation(() => {
       const log = Object.create(app.log) as typeof app.log;
-      log.info = ((...args: unknown[]) => {
+      log.info = (...args: unknown[]) => {
         entries.push(args);
-      }) as typeof log.info;
+      };
       return log;
     });
     try {
