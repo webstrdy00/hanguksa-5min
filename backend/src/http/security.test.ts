@@ -1,10 +1,22 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../app.ts';
 import type { ErrorEnvelope } from './errors.ts';
-import { resolveAllowedOrigins, tossMiniAppOrigins } from './security.ts';
+import { classifyCorsOrigin, resolveAllowedOrigins, tossMiniAppOrigins } from './security.ts';
 import type { AppInstance } from './types.ts';
 
 describe('tossMiniAppOrigins', () => {
+  it('Origin 진단은 알려진 앱 주소만 분류하고 임의 입력은 노출하지 않는다', () => {
+    expect(classifyCorsOrigin('https://hanguksa5min.private-web.tossmini.com')).toBe(
+      'private-web.tossmini.com',
+    );
+    expect(classifyCorsOrigin('https://hanguksa5min.web.tossmini.com')).toBe('web.tossmini.com');
+    expect(classifyCorsOrigin('null')).toBe('opaque');
+    expect(classifyCorsOrigin('https://private-token.attacker.example')).toBe('unrecognized');
+    expect(classifyCorsOrigin('https://hanguksa5min.web.tossmini.com?token=secret')).toBe(
+      'unrecognized',
+    );
+  });
+
   it('appName 에서 실서비스/QR 테스트 origin 을 파생한다 (SDK 3.x CORS 규칙)', () => {
     expect(tossMiniAppOrigins('hanguksa5min')).toEqual([
       'https://hanguksa5min.apps.tossmini.com',
