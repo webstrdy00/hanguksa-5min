@@ -33,8 +33,35 @@ export function resolveAllowedOrigins(): readonly string[] {
   return origins;
 }
 
+/** 임의 Origin 원문 대신 이 앱의 알려진 플랫폼 주소만 진단한다. */
+export function classifyCorsOrigin(origin: string): string {
+  if (origin === 'null') return 'opaque';
+  for (const domain of [
+    'apps.tossmini.com',
+    'private-apps.tossmini.com',
+    'web.tossmini.com',
+    'private-web.tossmini.com',
+  ]) {
+    if (origin === `https://${env.APP_NAME}.${domain}`) return domain;
+  }
+  return 'unrecognized';
+}
+
 export async function registerSecurity(app: AppInstance): Promise<void> {
   const allowedOrigins = resolveAllowedOrigins();
+
+  app.addHook('onRequest', (request, _reply, done) => {
+    const origin = request.headers.origin;
+    if (
+      request.method === 'OPTIONS' &&
+      request.url === '/v1/auth/bootstrap' &&
+      origin != null &&
+      !allowedOrigins.includes(origin)
+    ) {
+      request.log.warn({ originClass: classifyCorsOrigin(origin) }, 'auth_cors_origin_rejected');
+    }
+    done();
+  });
 
   await app.register(cors, {
     origin: (origin, callback) => {
