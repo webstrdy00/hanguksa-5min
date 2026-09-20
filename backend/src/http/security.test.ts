@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../app.ts';
 import type { ErrorEnvelope } from './errors.ts';
 import { classifyCorsOrigin, resolveAllowedOrigins, tossMiniAppOrigins } from './security.ts';
@@ -39,6 +39,34 @@ describe('보안 헤더와 오류 응답', () => {
 
   afterAll(async () => {
     await app.close();
+  });
+
+  it('거절된 사전 요청의 플랫폼 분류를 기록한다', async () => {
+    const entries: unknown[] = [];
+
+    const spy = vi.spyOn(app.log, 'child').mockImplementation(() => {
+      const log = Object.create(app.log) as ReturnType<typeof app.log.child>;
+      log.info = (...args: unknown[]) => {
+        entries.push(args);
+      };
+      return log;
+    });
+    try {
+      await app.inject({
+        method: 'OPTIONS',
+        url: '/v1/auth/bootstrap',
+        headers: {
+          origin: 'https://hanguksa5min.private-web.tossmini.com',
+          'access-control-request-method': 'POST',
+        },
+      });
+      expect(entries).toContainEqual([
+        { originClass: 'private-web.tossmini.com' },
+        'auth_cors_origin_rejected',
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it.each([
