@@ -14,9 +14,16 @@ import type { AppInstance } from './types.ts';
  * CORS origin 은 콘솔의 2026-08-25 주소 변경 안내 기준으로 appName 에서 파생된다.
  *   https://<appName>.apps.tossmini.com          실서비스
  *   https://<appName>.private-apps.tossmini.com  콘솔 QR 테스트
+ * SDK 3.x web/private-web 주소도 현재 사용된다(2026-09-21 실제 QR 요청 확인).
+ * 다른 앱이나 임의 하위 도메인이 아니라 이 앱의 정확한 네 주소만 허용한다.
  */
 export function tossMiniAppOrigins(appName: string): readonly string[] {
-  return [`https://${appName}.apps.tossmini.com`, `https://${appName}.private-apps.tossmini.com`];
+  return [
+    `https://${appName}.apps.tossmini.com`,
+    `https://${appName}.private-apps.tossmini.com`,
+    `https://${appName}.web.tossmini.com`,
+    `https://${appName}.private-web.tossmini.com`,
+  ];
 }
 
 export function resolveAllowedOrigins(): readonly string[] {

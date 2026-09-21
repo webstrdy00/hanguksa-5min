@@ -15,6 +15,8 @@ import { defineConfig } from '@apps-in-toss/web-framework/config';
  * appName 은 CORS Origin 허용 목록의 원본이기도 하다.
  *   https://<appName>.apps.tossmini.com          실서비스
  *   https://<appName>.private-apps.tossmini.com  콘솔 QR 테스트
+ *   https://<appName>.web.tossmini.com          SDK 3.x
+ *   https://<appName>.private-web.tossmini.com  SDK 3.x QR 실기기 확인
  * backend 의 APP_NAME 환경변수와 반드시 같아야 하며, `pnpm check:app-name` 이 이를 검사한다.
  */
 export default defineConfig({
