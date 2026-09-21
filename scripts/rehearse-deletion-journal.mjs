@@ -25,6 +25,8 @@ for (const key of [
   if (process.env[key] !== undefined) env[key] = process.env[key];
 }
 const secret = () => randomBytes(32).toString('hex');
+// 기존 운영 공급자에서 확인된 18도 비운영 DB로 검증한다. 기본/계약 버전은 17이다.
+const postgresMajor = process.argv.includes('--postgres18') ? '18' : '17';
 const password = secret();
 const journalId = randomUUID();
 const oldId = randomUUID();
@@ -50,7 +52,7 @@ delete env.DISCORD_ALERT_WEBHOOK_URL;
 const report = {
   status: 'FAIL',
   checkedAt: '',
-  engine: 'PostgreSQL 17',
+  engine: `PostgreSQL ${postgresMajor}`,
   productionDataUsed: false,
   checks: {},
   assumptions: [
@@ -233,7 +235,7 @@ try {
     'POSTGRES_DB=source',
     '-p',
     '127.0.0.1::5432',
-    'postgres:17-alpine',
+    `postgres:${postgresMajor}-alpine`,
   ]);
   for (let attempt = 0; ; attempt++) {
     const ready = spawnSync(
@@ -256,7 +258,10 @@ try {
   assert.equal(bindings[0].HostIp, '127.0.0.1');
   env.DATABASE_URL = `postgres://postgres:${password}@127.0.0.1:${bindings[0].HostPort}/source`;
   env.DELETION_JOURNAL_DATABASE_URL = url('journal');
-  assert.equal(query('source', "select current_setting('server_version_num')::int / 10000"), '17');
+  assert.equal(
+    query('source', "select current_setting('server_version_num')::int / 10000"),
+    postgresMajor,
+  );
   report.checks.containerStartup = 'PASS';
 
   check('migrationAdoptionAndSourceOnlySnapshot', () => {
