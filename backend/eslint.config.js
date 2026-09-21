@@ -37,6 +37,7 @@ export default tseslint.config(
     files: [
       'src/db/migrate.ts',
       'src/db/seed.ts',
+      'src/deletion-journal/cli.ts',
       'src/admin/issue-admin-token.ts',
       'src/jobs/mastery-recalc.ts',
       'src/admin/import-questions.ts',

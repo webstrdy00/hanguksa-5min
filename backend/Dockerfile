@@ -35,6 +35,7 @@ COPY --from=build /app/backend/node_modules ./backend/node_modules
 COPY --from=build /app/backend/dist ./backend/dist
 COPY --from=build /app/backend/src ./backend/src
 COPY --from=build /app/backend/migrations ./backend/migrations
+COPY --from=build /app/backend/journal-migrations ./backend/journal-migrations
 COPY --from=build /app/backend/package.json ./backend/package.json
 
 WORKDIR /app/backend

@@ -4,7 +4,17 @@ import { db } from '../db/client.ts';
 import { questionReports } from '../db/schema/content.ts';
 import { users } from '../db/schema/identity.ts';
 import { answers, mastery, studySessions, userQuestionState } from '../db/schema/learning.ts';
-import { deletionJobs, idempotencyKeys, notificationConsents } from '../db/schema/ops.ts';
+import {
+  deletionJobs,
+  deletionRestoreState,
+  idempotencyKeys,
+  notificationConsents,
+} from '../db/schema/ops.ts';
+import {
+  assertDeletionJournalBinding,
+  getDeletionJournal,
+  recordDeletionIntent,
+} from '../deletion-journal/runtime.ts';
 import { AppError } from '../http/errors.ts';
 import { logger } from '../observability/logger.ts';
 
@@ -54,12 +64,22 @@ export async function requestDeletion(
   userId: string,
   now = new Date(),
 ): Promise<{ jobId: string }> {
+  const [candidate] = await db
+    .select({ status: users.identityStatus })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (candidate == null) throw new AppError('NOT_FOUND');
+  if (candidate.status === 'deleted') throw new AppError('STATE_CONFLICT');
+  // 원장 → main DB 순서를 고정한다. main 실패로 원장 intent를 취소하지 않는다.
+  await recordDeletionIntent(userId, now);
   const jobId = await db.transaction(async (tx) => {
     const [user] = await tx
       .select({ id: users.id, identityStatus: users.identityStatus })
       .from(users)
       .where(eq(users.id, userId))
-      .limit(1);
+      .limit(1)
+      .for('update');
 
     if (user == null) throw new AppError('NOT_FOUND');
     if (user.identityStatus === 'deleted') {
@@ -78,6 +98,19 @@ export async function requestDeletion(
       })
       .where(eq(users.id, userId));
 
+    await tx
+      .update(notificationConsents)
+      .set({
+        functionalAgreed: false,
+        functionalAgreedAt: null,
+        marketingAgreed: false,
+        marketingAgreedAt: null,
+        pushTargetStatus: 'revoked',
+      })
+      .where(eq(notificationConsents.userId, userId));
+    if (getDeletionJournal() != null) {
+      await tx.execute(sql`select set_config('app.deletion_journal_recorded', 'on', true)`);
+    }
     const [job] = await tx
       .insert(deletionJobs)
       .values({
@@ -105,6 +138,7 @@ export async function requestDeletion(
  * 멱등하다. 중간에 실패해도 다시 돌리면 같은 상태가 된다.
  */
 export async function runPendingDeletionJobs(limit = 50, now = new Date()): Promise<number> {
+  await replayDeletionJournal(false, now);
   const pending = await db
     .select({ id: deletionJobs.id, subjectUserId: deletionJobs.subjectUserId })
     .from(deletionJobs)
@@ -155,7 +189,12 @@ export async function getDeletionQueueHealth(now = new Date()): Promise<{
   return { failed: row?.failed ?? 0, overdue: row?.overdue ?? 0 };
 }
 
-async function executeDeletion(jobId: string, userId: string, now: Date): Promise<boolean> {
+async function executeDeletion(
+  jobId: string,
+  userId: string,
+  now: Date,
+  force = false,
+): Promise<boolean> {
   const steps: DeletionStepRecord[] = [];
 
   const processed = await db.transaction(async (tx) => {
@@ -164,11 +203,17 @@ async function executeDeletion(jobId: string, userId: string, now: Date): Promis
       .select({ status: deletionJobs.status })
       .from(deletionJobs)
       .where(eq(deletionJobs.id, jobId))
-      .for('update', { skipLocked: true });
-    if (job == null || job.status === 'completed') return false;
+      .for('update', force ? {} : { skipLocked: true });
+    if (job == null || (!force && job.status === 'completed')) return false;
     await tx
       .update(deletionJobs)
-      .set({ status: 'in_progress', startedAt: now, updatedAt: now, lastError: null })
+      .set({
+        status: 'in_progress',
+        completedAt: null,
+        startedAt: now,
+        updatedAt: now,
+        lastError: null,
+      })
       .where(eq(deletionJobs.id, jobId));
     // ---------------------------------------------------------------------
     // 1. 운영 DB — 학습 개인 데이터 (09 §6: 삭제 요청 시 제거)
@@ -294,6 +339,83 @@ async function executeDeletion(jobId: string, userId: string, now: Date): Promis
 
   if (processed) logger.info({ jobId, steps: steps.length }, 'deletion_completed');
   return processed;
+}
+
+/**
+ * 기동 시 원장 전체 재적용. completed job도 복원 후 파기를 생략할 근거가 아니다.
+ * 실행 오류/불완전 원장은 전파하여 listen과 worker 시작을 막는다.
+ */
+export async function replayDeletionJournal(full = true, now = new Date()): Promise<void> {
+  const journal = getDeletionJournal();
+  if (journal == null) return;
+  await assertDeletionJournalBinding();
+  const [state] = await db
+    .select()
+    .from(deletionRestoreState)
+    .where(eq(deletionRestoreState.id, 1));
+  if (state == null) throw new AppError('DEPENDENCY_UNAVAILABLE');
+  let after = full ? 0 : state.replayedOrdinal;
+  const ceiling = (await journal.inspect()).entryCount;
+  while (after < ceiling) {
+    const entries = await journal.list(after, 100);
+    if (entries.length === 0) throw new AppError('DEPENDENCY_UNAVAILABLE');
+    for (const entry of entries) {
+      if (entry.ordinal > ceiling) break;
+      if (entry.ordinal !== after + 1) throw new AppError('DEPENDENCY_UNAVAILABLE');
+      const jobId = await db.transaction(async (tx) => {
+        await tx
+          .update(users)
+          .set({
+            identityStatus: 'deleted',
+            deletedAt: entry.requestedAt,
+            anonKeyFingerprint: revokedFingerprint(entry.userId),
+            anonKeyCiphertext: null,
+            anonKeyKeyVersion: null,
+          })
+          .where(eq(users.id, entry.userId));
+        const [existing] = await tx
+          .select({ id: deletionJobs.id })
+          .from(deletionJobs)
+          .where(eq(deletionJobs.subjectUserId, entry.userId))
+          .orderBy(deletionJobs.id)
+          .limit(1);
+        if (existing != null) return existing.id;
+        await tx.execute(sql`select set_config('app.deletion_journal_recorded', 'on', true)`);
+        const [created] = await tx
+          .insert(deletionJobs)
+          .values({
+            subjectUserId: entry.userId,
+            requestedAt: entry.requestedAt,
+            status: 'requested',
+            steps: [],
+          })
+          .returning({ id: deletionJobs.id });
+        if (created == null) throw new AppError('INTERNAL_ERROR');
+        return created.id;
+      });
+      if (!(await executeDeletion(jobId, entry.userId, now, true))) {
+        throw new AppError('DEPENDENCY_UNAVAILABLE');
+      }
+      const remnants = await db.execute(sql`
+        select 1 from users where id = ${entry.userId}::uuid
+        union all select 1 from notification_consents where user_id = ${entry.userId}::uuid
+        union all select 1 from study_sessions where user_id = ${entry.userId}::uuid
+        union all select 1 from user_question_state where user_id = ${entry.userId}::uuid
+        union all select 1 from mastery where user_id = ${entry.userId}::uuid
+        union all select 1 from idempotency_keys where user_id = ${entry.userId}::uuid
+        union all select 1 from question_reports where reporter_user_id = ${entry.userId}::uuid
+        limit 1
+      `);
+      if (remnants.length !== 0) throw new AppError('DEPENDENCY_UNAVAILABLE');
+      after = entry.ordinal;
+      await db
+        .update(deletionRestoreState)
+        .set({
+          replayedOrdinal: sql`greatest(${deletionRestoreState.replayedOrdinal}, ${after})`,
+        })
+        .where(eq(deletionRestoreState.id, 1));
+    }
+  }
 }
 
 export interface DeletionStatusView {

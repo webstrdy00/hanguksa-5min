@@ -29,6 +29,10 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(8080),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   DATABASE_URL: z.string().min(1),
+  /** 운영 DB와 별도 프로젝트의 삭제 원장. 비밀 연결 문자열은 로그 금지. */
+  DELETION_JOURNAL_DATABASE_URL: z.string().url().optional(),
+  /** 운영 설정에 고정한 원장 ID. 빈 원장/다른 원장으로 교체되면 기동 거부. */
+  DELETION_JOURNAL_ID: z.string().uuid().optional(),
   /** Discord 운영 알림 전용 secret. 원문을 로그나 클라이언트에 노출하지 않는다. */
   DISCORD_ALERT_WEBHOOK_URL: z
     .string()
@@ -110,6 +114,39 @@ export type Env = z.infer<typeof envSchema>;
  * 운영에서 mock 인증이 도는 사고를 기동 시점에 막는 것이 핵심이다.
  */
 const envSchemaWithRules = envSchema.superRefine((value, ctx) => {
+  const journalUrl = value.DELETION_JOURNAL_DATABASE_URL;
+  const journalId = value.DELETION_JOURNAL_ID;
+  if (
+    (journalUrl == null) !== (journalId == null) ||
+    (value.APP_ENV !== 'dev' && journalUrl == null)
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['DELETION_JOURNAL_DATABASE_URL'],
+      message: '운영·staging은 독립 삭제 원장 URL과 고정 ID가 모두 필요합니다.',
+    });
+  }
+  if (journalUrl != null) {
+    try {
+      const journal = new URL(journalUrl);
+      const main = new URL(value.DATABASE_URL);
+      const normalizedHost = (host: string): string => host.replace('-pooler.', '.');
+      if (
+        !['postgres:', 'postgresql:'].includes(journal.protocol) ||
+        (normalizedHost(journal.hostname) === normalizedHost(main.hostname) &&
+          journal.port === main.port &&
+          (value.APP_ENV !== 'dev' || journal.pathname === main.pathname))
+      ) {
+        throw new Error('INVALID_JOURNAL_ENDPOINT');
+      }
+    } catch {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['DELETION_JOURNAL_DATABASE_URL'],
+        message: '별도 PostgreSQL 프로젝트 연결이 필요합니다.',
+      });
+    }
+  }
   if (value.APP_ENV === 'production' && value.IDENTITY_PROVIDER !== 'toss') {
     ctx.addIssue({
       code: 'custom',

@@ -1,0 +1,121 @@
+{
+  "id": "06109611-41ca-4b82-b8d6-7f23c86df16a",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.journal_entries": {
+      "name": "journal_entries",
+      "schema": "",
+      "columns": {
+        "subject_user_id": {
+          "name": "subject_user_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "requested_at": {
+          "name": "requested_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ordinal": {
+          "name": "ordinal",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "journal_entries_ordinal_unique": {
+          "name": "journal_entries_ordinal_unique",
+          "nullsNotDistinct": false,
+          "columns": ["ordinal"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "journal_entries_ordinal_check": {
+          "name": "journal_entries_ordinal_check",
+          "value": "\"journal_entries\".\"ordinal\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.journal_metadata": {
+      "name": "journal_metadata",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "journal_id": {
+          "name": "journal_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dataset_id": {
+          "name": "dataset_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "initialized": {
+          "name": "initialized",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "entry_count": {
+          "name": "entry_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "journal_metadata_journal_id_unique": {
+          "name": "journal_metadata_journal_id_unique",
+          "nullsNotDistinct": false,
+          "columns": ["journal_id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "journal_metadata_singleton_check": {
+          "name": "journal_metadata_singleton_check",
+          "value": "\"journal_metadata\".\"id\" = 1"
+        },
+        "journal_metadata_entry_count_check": {
+          "name": "journal_metadata_entry_count_check",
+          "value": "\"journal_metadata\".\"entry_count\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

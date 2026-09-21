@@ -2,10 +2,15 @@ import process from 'node:process';
 import { buildApp } from './app.ts';
 import { env } from './config/env.ts';
 import { closeDb } from './db/client.ts';
+import { closeDeletionJournal } from './deletion-journal/runtime.ts';
 import { startDeletionWorker } from './jobs/deletion-worker.ts';
 import { createDeletionAlerts, createMonitoredDeletionBatch } from './jobs/deletion-alerts.ts';
 import { logger } from './observability/logger.ts';
-import { getDeletionQueueHealth, runPendingDeletionJobs } from './services/deletion.ts';
+import {
+  getDeletionQueueHealth,
+  replayDeletionJournal,
+  runPendingDeletionJobs,
+} from './services/deletion.ts';
 
 /**
  * 서버 진입점.
@@ -24,6 +29,7 @@ async function main(): Promise<void> {
       try {
         await app.close();
         await closeDb();
+        await closeDeletionJournal();
         logger.info('shutdown_completed');
         process.exit(0);
       } catch (error) {
@@ -40,6 +46,7 @@ async function main(): Promise<void> {
     shutdown('SIGINT');
   });
 
+  await replayDeletionJournal();
   await app.listen({ host: env.HOST, port: env.PORT });
   deletionWorker.stop = startDeletionWorker(
     createMonitoredDeletionBatch(
@@ -55,7 +62,8 @@ async function main(): Promise<void> {
   logger.info({ host: env.HOST, port: env.PORT }, 'server_started');
 }
 
-main().catch((error: unknown) => {
-  logger.fatal({ err: error }, 'server_start_failed');
+main().catch(() => {
+  // PostgreSQL driver 오류에 연결정보가 포함될 수 있어 시작 실패 원문은 기록하지 않는다.
+  logger.fatal('server_start_failed');
   process.exit(1);
 });

@@ -17,8 +17,37 @@ const baseEnv = {
   INTERNAL_TOKEN_SECRET: FAKE_TOKEN_SECRET,
   ADMIN_TOKEN_SECRET: FAKE_ADMIN_SECRET,
 };
+const journalEnv = {
+  DELETION_JOURNAL_DATABASE_URL: `postgres://journal:${FAKE_DB_PASSWORD}@journal.example.test:5432/journal`,
+  DELETION_JOURNAL_ID: '67aa5af4-de74-4aef-a987-f2c9858c09aa',
+};
 
 describe('loadEnv', () => {
+  it('운영과 staging은 독립 원장이 없으면 안전 실패한다', () => {
+    for (const APP_ENV of ['staging', 'production']) {
+      expect(() => loadEnv({ ...baseEnv, APP_ENV, NODE_ENV: 'test' })).toThrow(
+        /DELETION_JOURNAL_DATABASE_URL/,
+      );
+    }
+  });
+
+  it('원장 설정은 쌍으로 필요하고 운영 DB와 같은 연결은 금지한다', () => {
+    expect(() =>
+      loadEnv({ ...baseEnv, DELETION_JOURNAL_ID: journalEnv.DELETION_JOURNAL_ID }),
+    ).toThrow(/DELETION_JOURNAL_DATABASE_URL/);
+    expect(() =>
+      loadEnv({ ...baseEnv, ...journalEnv, DELETION_JOURNAL_DATABASE_URL: fakeDatabaseUrl }),
+    ).toThrow(/DELETION_JOURNAL_DATABASE_URL/);
+    expect(() =>
+      loadEnv({
+        ...baseEnv,
+        ...journalEnv,
+        APP_ENV: 'staging',
+        DATABASE_URL: `postgres://user:${FAKE_DB_PASSWORD}@ep-main.example.test/main`,
+        DELETION_JOURNAL_DATABASE_URL: `postgres://user:${FAKE_DB_PASSWORD}@ep-main-pooler.example.test/other`,
+      }),
+    ).toThrow(/DELETION_JOURNAL_DATABASE_URL/);
+  });
   it.each([
     '',
     'http://discord.com/api/webhooks/123/MOCK',
@@ -121,7 +150,7 @@ describe('loadEnv', () => {
   });
 
   it('APP_ENV 는 dev/staging/production 만 허용한다', () => {
-    expect(loadEnv({ ...baseEnv, APP_ENV: 'staging' }).APP_ENV).toBe('staging');
+    expect(loadEnv({ ...baseEnv, ...journalEnv, APP_ENV: 'staging' }).APP_ENV).toBe('staging');
     expect(() => loadEnv({ ...baseEnv, APP_ENV: 'qa' })).toThrow(/APP_ENV/);
   });
 

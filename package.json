@@ -24,6 +24,7 @@
     "db:migrate": "pnpm --filter @hanguksa/backend db:migrate",
     "verify": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm check:app-name && pnpm check:secrets",
     "test:db": "pnpm --filter @hanguksa/backend test:db",
+    "test:deletion-restore": "node scripts/rehearse-deletion-journal.mjs",
     "db:seed": "pnpm --filter @hanguksa/backend db:seed"
   },
   "devDependencies": {
