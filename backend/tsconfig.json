@@ -31,6 +31,7 @@
   "include": [
     "src",
     "drizzle.config.ts",
+    "drizzle.journal.config.ts",
     "vitest.config.ts",
     "vitest.setup.ts",
     "vitest.db.config.ts",

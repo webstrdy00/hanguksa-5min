@@ -3,6 +3,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { extractBearerToken, verifyAccessToken } from '../auth/token.ts';
 import { db } from '../db/client.ts';
 import { users } from '../db/schema/identity.ts';
+import { isDeletionRequested } from '../deletion-journal/runtime.ts';
 import { AppError } from './errors.ts';
 
 /**
@@ -57,6 +58,9 @@ export async function authenticate(request: FastifyRequest, _reply: FastifyReply
   }
   if (user.identityStatus !== 'active') {
     throw new AppError('FORBIDDEN');
+  }
+  if (await isDeletionRequested(user.id)) {
+    throw new AppError('USER_DELETED');
   }
 
   request.authenticatedUser = user;

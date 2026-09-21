@@ -43,6 +43,13 @@
       "when": 1787490766826,
       "tag": "0005_mastery_recalc_jobs",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789990907975,
+      "tag": "0006_cheerful_the_initiative",
+      "breakpoints": true
     }
   ]
 }

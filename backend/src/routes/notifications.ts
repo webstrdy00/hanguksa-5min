@@ -1,7 +1,9 @@
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../db/client.ts';
+import { users } from '../db/schema/identity.ts';
 import { notificationConsents } from '../db/schema/ops.ts';
+import { withLiveJournalSubject } from '../deletion-journal/runtime.ts';
 import { authenticate, requireUser } from '../http/authenticate.ts';
 import { AppError } from '../http/errors.ts';
 import type { AppInstance } from '../http/types.ts';
@@ -105,20 +107,38 @@ export function registerNotificationRoutes(app: AppInstance): void {
       ? { functionalAgreed: agreed, functionalAgreedAt: agreedAt }
       : { marketingAgreed: agreed, marketingAgreedAt: agreedAt };
 
-    const [row] = await db
-      .insert(notificationConsents)
-      .values({ userId: user.id, pushTargetStatus, ...values })
-      .onConflictDoUpdate({
-        target: notificationConsents.userId,
-        set: { pushTargetStatus, updatedAt: now, ...values },
-      })
-      .returning({
-        functionalAgreed: notificationConsents.functionalAgreed,
-        functionalAgreedAt: notificationConsents.functionalAgreedAt,
-        marketingAgreed: notificationConsents.marketingAgreed,
-        marketingAgreedAt: notificationConsents.marketingAgreedAt,
-        pushTargetStatus: notificationConsents.pushTargetStatus,
-      });
+    // 외부 삭제 잠금을 먼저 잡고 주 DB 커밋까지 유지한다.
+    const [row] = await withLiveJournalSubject(user.id, async () =>
+      db.transaction(async (tx) => {
+        const [currentUser] = await tx
+          .select({ identityStatus: users.identityStatus })
+          .from(users)
+          .where(eq(users.id, user.id))
+          .for('update');
+
+        if (currentUser == null || currentUser.identityStatus === 'deleted') {
+          throw new AppError('USER_DELETED');
+        }
+        if (currentUser.identityStatus !== 'active') {
+          throw new AppError('FORBIDDEN');
+        }
+
+        return await tx
+          .insert(notificationConsents)
+          .values({ userId: user.id, pushTargetStatus, ...values })
+          .onConflictDoUpdate({
+            target: notificationConsents.userId,
+            set: { pushTargetStatus, updatedAt: now, ...values },
+          })
+          .returning({
+            functionalAgreed: notificationConsents.functionalAgreed,
+            functionalAgreedAt: notificationConsents.functionalAgreedAt,
+            marketingAgreed: notificationConsents.marketingAgreed,
+            marketingAgreedAt: notificationConsents.marketingAgreedAt,
+            pushTargetStatus: notificationConsents.pushTargetStatus,
+          });
+      }),
+    );
 
     if (row == null) throw new AppError('INTERNAL_ERROR');
 

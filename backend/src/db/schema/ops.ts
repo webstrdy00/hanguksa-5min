@@ -24,6 +24,21 @@ import {
 } from './enums.ts';
 import { users } from './identity.ts';
 
+/** 복원본의 계보와 원장 재적용 위치. 외부 원장과 일치하지 않으면 기동하지 않는다. */
+export const deletionRestoreState = pgTable(
+  'deletion_restore_state',
+  {
+    id: integer('id').primaryKey().default(1),
+    datasetId: uuid('dataset_id').notNull().defaultRandom(),
+    replayedOrdinal: integer('replayed_ordinal').notNull().default(0),
+    journalEnforced: boolean('journal_enforced').notNull().default(false),
+  },
+  (t) => [
+    check('deletion_restore_state_singleton', sql`${t.id} = 1`),
+    check('deletion_restore_state_ordinal', sql`${t.replayedOrdinal} >= 0`),
+  ],
+);
+
 /**
  * 알림 동의 상태 (공통 01 §4, 공통 02 §3, 07 §7).
  *

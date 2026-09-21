@@ -1,6 +1,7 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { db } from '../db/client.ts';
 import { users } from '../db/schema/identity.ts';
+import { isDeletionRequested, withLiveJournalSubject } from '../deletion-journal/runtime.ts';
 import { AppError } from '../http/errors.ts';
 import { logger } from '../observability/logger.ts';
 import {
@@ -58,6 +59,9 @@ export class AuthService {
       if (existing.identityStatus === 'blocked') {
         throw new AppError('FORBIDDEN');
       }
+      if (await isDeletionRequested(existing.id)) {
+        throw new AppError('USER_DELETED');
+      }
 
       // 삭제된 계정은 재사용하지 않는다. 삭제 이행이 끝나지 않아 매핑이 남아 있으면
       // 그 자리에서 매핑을 폐기하고 새 계정을 만든다 (재가입 허용 정책).
@@ -65,11 +69,12 @@ export class AuthService {
         return await this.#recreateAfterDeletion(existing.id, current);
       }
 
-      await this.#refreshMappingIfRotated(existing, current);
-
       return {
         userId: existing.id,
-        accessToken: await issueAccessToken(existing.id),
+        accessToken: await withLiveJournalSubject(existing.id, async () => {
+          await this.#refreshMappingIfRotated(existing, current);
+          return await this.#issueTokenForActiveUser(existing.id);
+        }),
         created: false,
         verified: false,
       };
@@ -161,23 +166,25 @@ export class AuthService {
     deletedUserId: string,
     current: FingerprintCandidate,
   ): Promise<BootstrapResult> {
-    const newUserId = await db.transaction(async (tx) => {
-      await tx
-        .update(users)
-        .set({ anonKeyFingerprint: revokedFingerprint(deletedUserId) })
-        .where(eq(users.id, deletedUserId));
+    const newUserId = await withLiveJournalSubject(deletedUserId, async () =>
+      db.transaction(async (tx) => {
+        await tx
+          .update(users)
+          .set({ anonKeyFingerprint: revokedFingerprint(deletedUserId) })
+          .where(eq(users.id, deletedUserId));
 
-      const [created] = await tx
-        .insert(users)
-        .values({
-          anonKeyFingerprint: current.fingerprint,
-          anonKeyFingerprintVersion: current.version,
-          identityVerifiedAt: new Date(),
-        })
-        .returning({ id: users.id });
+        const [created] = await tx
+          .insert(users)
+          .values({
+            anonKeyFingerprint: current.fingerprint,
+            anonKeyFingerprintVersion: current.version,
+            identityVerifiedAt: new Date(),
+          })
+          .returning({ id: users.id });
 
-      return created?.id ?? null;
-    });
+        return created?.id ?? null;
+      }),
+    );
 
     if (newUserId == null) {
       throw new AppError('INTERNAL_ERROR');
@@ -187,7 +194,9 @@ export class AuthService {
 
     return {
       userId: newUserId,
-      accessToken: await issueAccessToken(newUserId),
+      accessToken: await withLiveJournalSubject(newUserId, async () =>
+        this.#issueTokenForActiveUser(newUserId),
+      ),
       created: true,
       verified: false,
     };
@@ -214,7 +223,9 @@ export class AuthService {
     if (createdId != null) {
       return {
         userId: createdId,
-        accessToken: await issueAccessToken(createdId),
+        accessToken: await withLiveJournalSubject(createdId, async () =>
+          this.#issueTokenForActiveUser(createdId),
+        ),
         created: true,
         verified: options.verified,
       };
@@ -232,12 +243,34 @@ export class AuthService {
     if (raced.identityStatus === 'blocked') {
       throw new AppError('FORBIDDEN');
     }
+    if (raced.identityStatus === 'deleted') {
+      throw new AppError('USER_DELETED');
+    }
 
     return {
       userId: raced.id,
-      accessToken: await issueAccessToken(raced.id),
+      accessToken: await withLiveJournalSubject(raced.id, async () =>
+        this.#issueTokenForActiveUser(raced.id),
+      ),
       created: false,
       verified: options.verified,
     };
+  }
+
+  async #issueTokenForActiveUser(userId: string): Promise<AccessToken> {
+    // 매핑 갱신/생성 중 삭제되었을 수 있으므로 토큰 발급 직전에 다시 확인한다.
+    const [user] = await db
+      .select({ identityStatus: users.identityStatus })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+
+    if (user == null || user.identityStatus === 'deleted') {
+      throw new AppError('USER_DELETED');
+    }
+    if (user.identityStatus !== 'active') {
+      throw new AppError('FORBIDDEN');
+    }
+    return await issueAccessToken(userId);
   }
 }

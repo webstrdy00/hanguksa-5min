@@ -148,11 +148,16 @@ jobs:
           APP_ENV: dev
           DATABASE_URL: postgres://ci:ci@127.0.0.1:5432/ci
 
+      - name: 독립 삭제 원장 복원 및 실패 차단 검증
+        run: pnpm test:deletion-restore
+        timeout-minutes: 10
+
       - name: 커밋되지 않은 migration 이 없는지 확인
         run: |
           pnpm db:generate
-          if [ -n "$(git status --porcelain backend/migrations)" ]; then
+          pnpm --filter @hanguksa/backend journal:generate
+          if [ -n "$(git status --porcelain backend/migrations backend/journal-migrations)" ]; then
             echo "::error::스키마와 migration 파일이 어긋납니다. pnpm db:generate 결과를 커밋하세요."
-            git status --porcelain backend/migrations
+            git status --porcelain backend/migrations backend/journal-migrations
             exit 1
           fi

@@ -1,9 +1,12 @@
 import type postgres from 'postgres';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../app.ts';
 import { env } from '../config/env.ts';
 import { createTestClient, truncateAll } from '../db/test-helpers.ts';
+import * as deletionJournal from '../deletion-journal/runtime.ts';
+import { AppError } from '../http/errors.ts';
 import type { AppInstance } from '../http/types.ts';
+import { buildFingerprintCandidates } from './fingerprint.ts';
 import type { IdentityProvider, VerificationOutcome } from './identity-provider.ts';
 import { issueAccessToken } from './token.ts';
 
@@ -328,6 +331,219 @@ describe('GET /v1/me (Bearer 인증)', () => {
 
     expect(response.statusCode).toBe(403);
     expect(response.json<{ code: string }>().code).toBe('FORBIDDEN');
+  });
+});
+
+describe('외부 삭제 의도 인증 차단', () => {
+  beforeEach(() => {
+    vi.spyOn(deletionJournal, 'isDeletionRequested').mockResolvedValue(false);
+    vi.spyOn(deletionJournal, 'withLiveJournalSubject').mockImplementation(
+      async (_userId, operation) => operation(),
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    ['USER_DELETED', 403],
+    ['DEPENDENCY_UNAVAILABLE', 503],
+  ] as const)('동의 쓰기 경계의 %s 오류는 동의를 기록하지 않는다', async (code, status) => {
+    const first = await bootstrap('anon-key-journal-consent');
+    const token = first.json<{ accessToken: string }>().accessToken;
+    vi.mocked(deletionJournal.withLiveJournalSubject).mockRejectedValue(new AppError(code));
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/v1/notifications/consent',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { result: 'newAgreement' },
+    });
+
+    expect(response.statusCode).toBe(status);
+    expect(response.json<{ code: string }>().code).toBe(code);
+    const [row] = await sql<{ count: string }[]>`
+      select count(*)::text as count from notification_consents
+    `;
+    expect(row?.count).toBe('0');
+  });
+
+  it('동의 트랜잭션은 인증 이후 삭제된 주 DB 행을 잠금 상태로 재확인한다', async () => {
+    const first = await bootstrap('anon-key-journal-consent-race');
+    const token = first.json<{ accessToken: string }>().accessToken;
+    vi.mocked(deletionJournal.withLiveJournalSubject).mockImplementation(
+      async (_userId, operation) => {
+        await sql`update users set identity_status = 'deleted', deleted_at = now()`;
+        return await operation();
+      },
+    );
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: '/v1/notifications/consent',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { result: 'newAgreement' },
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json<{ code: string }>().code).toBe('USER_DELETED');
+    const [row] = await sql<{ count: string }[]>`
+      select count(*)::text as count from notification_consents
+    `;
+    expect(row?.count).toBe('0');
+  });
+
+  it('DB 가 active 로 복원되거나 삭제 트랜잭션이 실패해도 기존 토큰과 재접속을 막는다', async () => {
+    const first = await bootstrap('anon-key-journal-active');
+    const token = first.json<{ accessToken: string }>().accessToken;
+    vi.mocked(deletionJournal.isDeletionRequested).mockResolvedValue(true);
+
+    const bearer = await app.inject({
+      method: 'GET',
+      url: '/v1/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const returning = await bootstrap('anon-key-journal-active');
+
+    for (const response of [bearer, returning]) {
+      expect(response.statusCode).toBe(403);
+      expect(response.json<{ code: string }>().code).toBe('USER_DELETED');
+      expect(response.json()).not.toHaveProperty('accessToken');
+    }
+    const rows = await sql<{ identity_status: string }[]>`select identity_status from users`;
+    expect(rows).toEqual([{ identity_status: 'active' }]);
+    expect(provider.calls).toBe(1);
+  });
+
+  it('외부 저장소 장애는 bearer 와 bootstrap 에서 503 으로 전파된다', async () => {
+    const first = await bootstrap('anon-key-journal-unavailable');
+    const token = first.json<{ accessToken: string }>().accessToken;
+    vi.mocked(deletionJournal.isDeletionRequested).mockRejectedValue(
+      new AppError('DEPENDENCY_UNAVAILABLE'),
+    );
+
+    const bearer = await app.inject({
+      method: 'GET',
+      url: '/v1/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    const returning = await bootstrap('anon-key-journal-unavailable');
+
+    for (const response of [bearer, returning]) {
+      expect(response.statusCode).toBe(503);
+      expect(response.json<{ code: string }>().code).toBe('DEPENDENCY_UNAVAILABLE');
+      expect(response.json()).not.toHaveProperty('accessToken');
+    }
+  });
+
+  it('차단 계정은 외부 저장소 장애보다 FORBIDDEN 을 우선한다', async () => {
+    await bootstrap('anon-key-journal-blocked');
+    await sql`update users set identity_status = 'blocked'`;
+    const check = vi
+      .mocked(deletionJournal.isDeletionRequested)
+      .mockRejectedValue(new AppError('DEPENDENCY_UNAVAILABLE'));
+    check.mockClear();
+
+    const response = await bootstrap('anon-key-journal-blocked');
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json<{ code: string }>().code).toBe('FORBIDDEN');
+    expect(check).not.toHaveBeenCalled();
+  });
+
+  it('삭제 의도가 남은 예전 매핑은 재생성하지 않으며 매핑 폐기 후 새 UUID 재가입은 허용한다', async () => {
+    const first = await bootstrap('anon-key-journal-rejoin');
+    const oldToken = first.json<{ accessToken: string }>().accessToken;
+    const [old] = await sql<{ id: string }[]>`select id from users`;
+    await sql`update users set identity_status = 'deleted', deleted_at = now()`;
+    vi.mocked(deletionJournal.isDeletionRequested).mockImplementation((id) =>
+      Promise.resolve(id === old!.id),
+    );
+
+    const pending = await bootstrap('anon-key-journal-rejoin');
+    expect(pending.statusCode).toBe(403);
+    expect(pending.json<{ code: string }>().code).toBe('USER_DELETED');
+    const [count] = await sql<{ count: string }[]>`select count(*)::text as count from users`;
+    expect(count?.count).toBe('1');
+
+    // 삭제 이행/재생이 기존 매핑을 폐기한 이후에만 새 ID 로 가입할 수 있다.
+    await sql`update users set anon_key_fingerprint = 'revoked:' || id::text`;
+    const rejoined = await bootstrap('anon-key-journal-rejoin');
+    expect(rejoined.statusCode).toBe(201);
+    const newToken = rejoined.json<{ accessToken: string }>().accessToken;
+    const active = await app.inject({
+      method: 'GET',
+      url: '/v1/me',
+      headers: { authorization: `Bearer ${newToken}` },
+    });
+    expect(active.statusCode).toBe(200);
+    expect(active.json<{ userId: string }>().userId).not.toBe(old!.id);
+    const deleted = await app.inject({
+      method: 'GET',
+      url: '/v1/me',
+      headers: { authorization: `Bearer ${oldToken}` },
+    });
+    expect(deleted.statusCode).toBe(403);
+    expect(deleted.json<{ code: string }>().code).toBe('USER_DELETED');
+  });
+
+  it.each(['deleted', 'tombstone'] as const)(
+    '생성 충돌로 찾은 계정이 %s 이면 토큰을 발급하지 않는다',
+    async (state) => {
+      const anonKey = 'anon-key-journal-conflict';
+      const current = buildFingerprintCandidates(anonKey)[0]!;
+      vi.spyOn(provider, 'verifyAnonKey').mockImplementation(async () => {
+        await sql`
+          insert into users (anon_key_fingerprint, anon_key_fingerprint_version, identity_status, deleted_at)
+          values (
+            ${current.fingerprint}, ${current.version},
+            ${state === 'deleted' ? 'deleted' : 'active'},
+            ${state === 'deleted' ? new Date() : null}
+          )
+        `;
+        vi.mocked(deletionJournal.isDeletionRequested).mockResolvedValue(state === 'tombstone');
+        if (state === 'tombstone') {
+          vi.mocked(deletionJournal.withLiveJournalSubject).mockRejectedValue(
+            new AppError('USER_DELETED'),
+          );
+        }
+        return { status: 'valid' };
+      });
+
+      const response = await bootstrap(anonKey);
+
+      expect(response.statusCode).toBe(403);
+      expect(response.json<{ code: string }>().code).toBe('USER_DELETED');
+      expect(response.json()).not.toHaveProperty('accessToken');
+    },
+  );
+
+  it('최초 조회 이후 DB 상태가 삭제로 바뀌면 발급 직전 재확인으로 막는다', async () => {
+    await bootstrap('anon-key-journal-status-race');
+    vi.mocked(deletionJournal.isDeletionRequested).mockImplementationOnce(async () => {
+      await sql`update users set identity_status = 'deleted', deleted_at = now()`;
+      return false;
+    });
+
+    const response = await bootstrap('anon-key-journal-status-race');
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json<{ code: string }>().code).toBe('USER_DELETED');
+    expect(response.json()).not.toHaveProperty('accessToken');
+  });
+
+  it('최초 외부 조회 이후 삭제 의도가 생겨도 발급 직전에 다시 차단한다', async () => {
+    await bootstrap('anon-key-journal-intent-race');
+    vi.mocked(deletionJournal.withLiveJournalSubject).mockRejectedValue(
+      new AppError('USER_DELETED'),
+    );
+
+    const response = await bootstrap('anon-key-journal-intent-race');
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json<{ code: string }>().code).toBe('USER_DELETED');
+    expect(response.json()).not.toHaveProperty('accessToken');
   });
 });
 
