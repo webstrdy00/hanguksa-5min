@@ -7,6 +7,8 @@
  * - SDK 3.x 마이그레이션 문서: CORS Origin 허용 목록이 appName에서 파생된다.
  *     https://<appName>.apps.tossmini.com          (실서비스)
  *     https://<appName>.private-apps.tossmini.com  (콘솔 QR 테스트)
+ *     https://<appName>.web.tossmini.com          (SDK 3.x)
+ *     https://<appName>.private-web.tossmini.com  (SDK 3.x QR)
  *
  * 코드상의 단일 원본은 frontend/apps-in-toss.config.ts 의 appName 리터럴이다.
  * backend는 같은 값을 APP_NAME 환경변수로 받아 CORS allowlist를 만든다.
@@ -78,4 +80,6 @@ console.log(`✔ appName = "${configAppName}"`);
 console.log('  파생 CORS origin:');
 console.log(`    https://${configAppName}.apps.tossmini.com`);
 console.log(`    https://${configAppName}.private-apps.tossmini.com`);
+console.log(`    https://${configAppName}.web.tossmini.com`);
+console.log(`    https://${configAppName}.private-web.tossmini.com`);
 console.log('  ⚠ 앱인토스 콘솔 등록값과의 일치는 사람이 직접 확인해야 합니다(등록 후 수정 불가).');

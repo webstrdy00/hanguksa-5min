@@ -21,6 +21,8 @@ describe('tossMiniAppOrigins', () => {
     expect(tossMiniAppOrigins('hanguksa5min')).toEqual([
       'https://hanguksa5min.apps.tossmini.com',
       'https://hanguksa5min.private-apps.tossmini.com',
+      'https://hanguksa5min.web.tossmini.com',
+      'https://hanguksa5min.private-web.tossmini.com',
     ]);
   });
 
@@ -56,12 +58,12 @@ describe('보안 헤더와 오류 응답', () => {
         method: 'OPTIONS',
         url: '/v1/auth/bootstrap',
         headers: {
-          origin: 'https://hanguksa5min.private-web.tossmini.com',
+          origin: 'https://other-app.private-web.tossmini.com',
           'access-control-request-method': 'POST',
         },
       });
       expect(entries).toContainEqual([
-        { originClass: 'private-web.tossmini.com' },
+        { originClass: 'unrecognized' },
         'auth_cors_origin_rejected',
       ]);
     } finally {
@@ -72,6 +74,8 @@ describe('보안 헤더와 오류 응답', () => {
   it.each([
     'https://hanguksa5min.apps.tossmini.com',
     'https://hanguksa5min.private-apps.tossmini.com',
+    'https://hanguksa5min.web.tossmini.com',
+    'https://hanguksa5min.private-web.tossmini.com',
   ])('새 미니앱 주소 %s 의 인증 사전 요청을 허용한다', async (origin) => {
     const response = await app.inject({
       method: 'OPTIONS',
@@ -94,6 +98,10 @@ describe('보안 헤더와 오류 응답', () => {
     'https://other-app.apps.tossmini.com',
     'https://hanguksa5min.apps.tossmini.com.attacker.example',
     'http://hanguksa5min.apps.tossmini.com',
+    'https://other-app.private-web.tossmini.com',
+    'https://hanguksa5min.private-web.tossmini.com.attacker.example',
+    'http://hanguksa5min.private-web.tossmini.com',
+    'null',
   ])('다른 앱이나 위장 주소 %s 에 사전 요청을 허용하지 않는다', async (origin) => {
     const response = await app.inject({
       method: 'OPTIONS',
