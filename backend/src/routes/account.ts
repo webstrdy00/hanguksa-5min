@@ -58,13 +58,13 @@ export function registerAccountRoutes(app: AppInstance): void {
   );
 
   app.get('/v1/account/deletion/:jobId', { preHandler: authenticate }, async (request) => {
-    // 삭제된 계정은 authenticate 단계에서 403 이므로,
-    // 이 경로는 삭제 요청 직후(같은 토큰이 아직 유효한 순간)나 운영 확인용이다.
-    requireUser(request);
+    // 삭제된 계정의 토큰은 이 경로에서도 거부한다. 재가입한 계정이나
+    // 다른 사용자가 job ID 를 알아도 기존 계정의 삭제 이력을 조회할 수 없다.
+    const user = requireUser(request);
 
     const params = z.object({ jobId: z.string().uuid() }).safeParse(request.params);
     if (!params.success) throw new AppError('INVALID_REQUEST');
 
-    return await getDeletionStatus(params.data.jobId);
+    return await getDeletionStatus(params.data.jobId, user.id);
   });
 }

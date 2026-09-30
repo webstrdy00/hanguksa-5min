@@ -362,3 +362,42 @@ describe('StudyScreen', () => {
     expect(screen.getByText('고른 답은 전송되지 않아요.')).toBeTruthy();
   });
 });
+
+it('제출 중 문항이 무효화되면 세션을 갱신하고 다시 제출시키지 않는다', async () => {
+  let submitted = false;
+  let answerRequests = 0;
+  vi.stubGlobal('fetch', (input: string) => {
+    if (String(input).includes('/answer')) {
+      submitted = true;
+      answerRequests++;
+      return Promise.resolve(
+        Response.json(
+          {
+            code: 'STATE_CONFLICT',
+            message: '이 문제는 학습에서 제외됐어요.',
+            retryable: false,
+            requestId: 'MOCK-request',
+          },
+          { status: 409 },
+        ),
+      );
+    }
+    return Promise.resolve(
+      Response.json({
+        ...session,
+        items: session.items.map((item, index) =>
+          index === 0 && submitted ? { ...item, voided: true } : item,
+        ),
+      }),
+    );
+  });
+  renderScreen();
+  await screen.findByText('문항 0 입니다');
+  await userEvent.click(screen.getAllByRole('radio')[1]!);
+  await userEvent.click(screen.getByRole('button', { name: '답 제출하기' }));
+  await screen.findByText('확인 중인 문항');
+  expect(screen.queryByRole('button', { name: '답 제출하기' })).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: '다음 문제' }));
+  await screen.findByText('문항 1 입니다');
+  expect(answerRequests).toBe(1);
+});

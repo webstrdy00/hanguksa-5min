@@ -426,8 +426,11 @@ export interface DeletionStatusView {
   steps: DeletionStepRecord[];
 }
 
-/** 삭제 진행 상황 조회. 운영자가 "정말 지워졌는지" 확인하는 경로다. */
-export async function getDeletionStatus(jobId: string): Promise<DeletionStatusView> {
+/** 삭제 진행 상황 조회. 요청한 사용자 본인의 작업만 반환한다. */
+export async function getDeletionStatus(
+  jobId: string,
+  userId: string,
+): Promise<DeletionStatusView> {
   const [job] = await db
     .select({
       id: deletionJobs.id,
@@ -437,7 +440,7 @@ export async function getDeletionStatus(jobId: string): Promise<DeletionStatusVi
       steps: deletionJobs.steps,
     })
     .from(deletionJobs)
-    .where(eq(deletionJobs.id, jobId))
+    .where(and(eq(deletionJobs.id, jobId), eq(deletionJobs.subjectUserId, userId)))
     .limit(1);
 
   if (job == null) throw new AppError('NOT_FOUND');

@@ -12,7 +12,7 @@ import { Analytics } from '@apps-in-toss/web-framework';
  * 지표 설정 (공통 05 §5, 08 §6):
  *   활성 지표 = 7일 재방문
  *   대표 전환 = complete_daily_study
- *   보조 전환 = complete_review, notification_agreed
+ *   보조 전환 = complete_review, complete_notification_agreed
  *   운영     = question_report, voided_question_seen, schedule_changed
  *
  * ⚠️ 절대 넣지 않는 값 (07 §7, 공통 04 §4, 하드게이트 P0):
@@ -120,7 +120,7 @@ export const ANALYTICS_EVENTS = {
   /** 대표 전환 (08 §6) */
   conversion: 'complete_daily_study',
   /** 보조 전환 */
-  secondary: ['complete_review', 'notification_agreed'],
+  secondary: ['complete_review', 'complete_notification_agreed'],
   /** 운영 */
   operational: ['question_report', 'voided_question_seen', 'schedule_changed'],
 } as const;

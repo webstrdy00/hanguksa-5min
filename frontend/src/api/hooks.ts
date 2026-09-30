@@ -120,6 +120,12 @@ export function useSubmitAnswer(
       });
       void client.invalidateQueries({ queryKey: queryKeys.session });
     },
+    onError: (error) => {
+      // 풀던 문항이 무효화되거나 세션 상태가 바뀌면 오래된 화면으로 재제출하지 않는다.
+      if (error instanceof ApiError && (error.status === 409 || error.status === 422)) {
+        void client.invalidateQueries({ queryKey: queryKeys.session });
+      }
+    },
     // 답안은 자동 재시도하지 않는다. 중복 제출로 보이지 않게 사용자가 결정한다.
     retry: false,
   });

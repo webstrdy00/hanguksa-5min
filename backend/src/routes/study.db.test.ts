@@ -9,6 +9,7 @@ import {
   truncateAll,
 } from '../db/test-helpers.ts';
 import type { AppInstance } from '../http/types.ts';
+import { recalculateMastery } from '../services/progress.ts';
 
 /**
  * 오늘 세션 통합 테스트 (08 §2·§4, 09 §1~2).
@@ -380,6 +381,43 @@ describe('POST /v1/sessions/:id/complete', () => {
     expect(row?.streak_days).toBe(1);
   });
 
+  it('동시 완료 요청 중 하나만 새 완료로 보고하고 나머지는 같은 결과를 재생한다', async () => {
+    const session = await startToday();
+    await answerAll(session, true);
+
+    const requests: ReturnType<typeof complete>[] = [];
+    await sql.begin(async (tx) => {
+      // 두 요청이 실제로 겹치도록 완료 쓰기를 잠시 막는다. 수정 전에는
+      // 둘 다 completed_at = null 을 읽고, 수정 후에는 두 번째가 사용자 잠금에서 기다린다.
+      await tx`select id from study_sessions where id = ${session.session.id} for update`;
+      requests.push(complete(session.session.id), complete(session.session.id));
+      await vi.waitFor(
+        async () => {
+          const [waiting] = await sql<{ count: number }[]>`
+            select count(*)::integer as count from pg_stat_activity
+            where datname = current_database() and wait_event_type = 'Lock'
+          `;
+          expect(waiting?.count).toBeGreaterThanOrEqual(2);
+        },
+        { timeout: 5000, interval: 10 },
+      );
+    });
+    const responses = await Promise.all(requests);
+    expect(responses.map((response) => response.statusCode)).toEqual([200, 200]);
+    const bodies = responses.map((response) =>
+      response.json<{
+        alreadyCompleted: boolean;
+        session: { score: number; completedAt: string };
+        streak: { days: number; lastStreakDate: string };
+      }>(),
+    );
+
+    expect(bodies.filter((body) => !body.alreadyCompleted)).toHaveLength(1);
+    expect(bodies[0]!.session).toEqual(bodies[1]!.session);
+    expect(bodies[0]!.streak).toEqual(bodies[1]!.streak);
+    expect(bodies[0]!.streak.days).toBe(1);
+  });
+
   it('다른 사용자의 세션을 완료할 수 없다', async () => {
     const session = await startToday();
     await answerAll(session, true);
@@ -401,6 +439,56 @@ describe('POST /v1/sessions/:id/complete', () => {
 });
 
 describe('void 문항 처리 (07 §9, 09 §2)', () => {
+  it('void 재계산 후 오래된 화면에서 보낸 답안은 통계와 복습 상태에 반영하지 않는다', async () => {
+    const session = await startToday();
+    const voidedId = session.items[0]!.questionRevisionId;
+    const [owner] = await sql<{ user_id: string }[]>`
+      select user_id from study_sessions where id = ${session.session.id}
+    `;
+
+    await sql`
+      update question_revisions set status = 'voided', status_reason = '중대한 사실 오류'
+      where id = ${voidedId}
+    `;
+    await recalculateMastery(owner!.user_id, new Date());
+
+    const response = await answer(session.session.id, voidedId, 1);
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json<{ code: string; details: { revisionStatus: string } }>()).toMatchObject({
+      code: 'STATE_CONFLICT',
+      details: { revisionStatus: 'voided' },
+    });
+    const [counts] = await sql<
+      {
+        answers: number;
+        states: number;
+        mastery: number;
+      }[]
+    >`
+      select
+        (select count(*)::integer from answers) as answers,
+        (select count(*)::integer from user_question_state) as states,
+        (select count(*)::integer from mastery) as mastery
+    `;
+    expect(counts).toEqual({ answers: 0, states: 0, mastery: 0 });
+    expect((await startToday()).items[0]).toMatchObject({ voided: true, answered: false });
+  });
+
+  it('새 revision 으로 대체된 retired 문항은 기존 세션에서 계속 답할 수 있다', async () => {
+    const session = await startToday();
+    const retiredId = session.items[0]!.questionRevisionId;
+    await sql`
+      update question_revisions set status = 'retired', status_reason = '새 revision 발행으로 대체'
+      where id = ${retiredId}
+    `;
+
+    const response = await answer(session.session.id, retiredId, 0);
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json<{ isCorrect: boolean }>()).toMatchObject({ isCorrect: true });
+  });
+
   it('세션 중 void 된 문항은 풀지 않아도 완료할 수 있고 점수에서 제외된다', async () => {
     const session = await startToday();
 
@@ -469,6 +557,30 @@ describe('날짜 경계 (09 §1)', () => {
     const response = await complete(session.session.id);
 
     expect(response.statusCode).toBe(409);
+  });
+
+  it('유예창에서 전날과 오늘 세션을 동시에 완료해도 streak 날짜가 뒤로 가지 않는다', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-08-17T14:59:00Z'));
+    await refreshToken();
+    const yesterday = await startToday();
+    await answerAll(yesterday, true);
+
+    vi.setSystemTime(new Date('2026-08-17T15:30:00Z'));
+    await refreshToken();
+    const today = await startToday();
+    await answerAll(today, true);
+
+    const responses = await Promise.all([
+      complete(yesterday.session.id),
+      complete(today.session.id),
+    ]);
+    expect(responses.map((response) => response.statusCode)).toEqual([200, 200]);
+
+    const [profile] = await sql<{ last_streak_date: string }[]>`
+      select last_streak_date::text from users
+    `;
+    expect(profile?.last_streak_date).toBe(today.session.studyDate);
   });
 
   it('날짜가 바뀌면 새 세션이 만들어진다', async () => {

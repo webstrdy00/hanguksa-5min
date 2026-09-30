@@ -11,7 +11,11 @@ import {
 } from '../db/test-helpers.ts';
 import type { AppInstance } from '../http/types.ts';
 import { startDeletionWorker } from '../jobs/deletion-worker.ts';
-import { getDeletionQueueHealth, runPendingDeletionJobs } from '../services/deletion.ts';
+import {
+  getDeletionQueueHealth,
+  getDeletionStatus,
+  runPendingDeletionJobs,
+} from '../services/deletion.ts';
 
 /**
  * 계정 삭제 통합 테스트 (공통 04 §5, 09 §6, 하드게이트 P0).
@@ -231,6 +235,83 @@ describe('DELETE /v1/account', () => {
       headers: { authorization: `Bearer ${newToken}` },
     });
     expect(me.statusCode).toBe(200);
+  });
+});
+
+describe('GET /v1/account/deletion/:jobId', () => {
+  it('다른 계정은 요청 중이거나 완료된 삭제 작업을 조회할 수 없다', async () => {
+    const otherToken = await bootstrap('anon-other-deletion-user');
+    const deleted = await app.inject({
+      method: 'DELETE',
+      url: '/v1/account',
+      headers: auth(),
+      payload: { confirm: '삭제' },
+    });
+    expect(deleted.statusCode).toBe(202);
+    const { jobId } = deleted.json<{ jobId: string }>();
+
+    const requested = await app.inject({
+      method: 'GET',
+      url: `/v1/account/deletion/${jobId}`,
+      headers: { authorization: `Bearer ${otherToken}` },
+    });
+    expect(requested.statusCode).toBe(404);
+    expect(requested.json<{ code: string }>().code).toBe('NOT_FOUND');
+
+    await runPendingDeletionJobs();
+    const completed = await app.inject({
+      method: 'GET',
+      url: `/v1/account/deletion/${jobId}`,
+      headers: { authorization: `Bearer ${otherToken}` },
+    });
+    expect(completed.statusCode).toBe(404);
+  });
+
+  it('삭제한 계정의 토큰과 같은 식별키로 재가입한 계정도 이전 작업을 조회할 수 없다', async () => {
+    const deleted = await app.inject({
+      method: 'DELETE',
+      url: '/v1/account',
+      headers: auth(),
+      payload: { confirm: '삭제' },
+    });
+    const { jobId } = deleted.json<{ jobId: string }>();
+
+    const owner = await app.inject({
+      method: 'GET',
+      url: `/v1/account/deletion/${jobId}`,
+      headers: auth(),
+    });
+    expect(owner.statusCode).toBe(403);
+    expect(owner.json<{ code: string }>().code).toBe('USER_DELETED');
+
+    const newToken = await bootstrap();
+    const reregistered = await app.inject({
+      method: 'GET',
+      url: `/v1/account/deletion/${jobId}`,
+      headers: { authorization: `Bearer ${newToken}` },
+    });
+    expect(reregistered.statusCode).toBe(404);
+  });
+
+  it('서비스 조회는 작업 소유자를 확인하고 본인의 결과만 반환한다', async () => {
+    const [user] = await sql<{ id: string }[]>`select id from users`;
+    const deleted = await app.inject({
+      method: 'DELETE',
+      url: '/v1/account',
+      headers: auth(),
+      payload: { confirm: '삭제' },
+    });
+    const { jobId } = deleted.json<{ jobId: string }>();
+
+    await expect(getDeletionStatus(jobId, user!.id)).resolves.toMatchObject({
+      jobId,
+      status: 'requested',
+    });
+    await expect(
+      getDeletionStatus(jobId, '00000000-0000-4000-8000-000000000000'),
+    ).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
   });
 });
 

@@ -348,6 +348,22 @@ export async function submitAnswer(
       // 답안 기록과 복습 상태 갱신은 같은 트랜잭션에서 이뤄져야 한다.
       // 답은 저장됐는데 복습 큐가 갱신되지 않으면 다음 날 복습 후보가 생기지 않는다.
       await db.transaction(async (tx) => {
+        // 세션을 연 뒤 문항이 무효화됐을 수 있다. 상태 확인과 답안 반영 사이의
+        // void 전이도 막아 재계산 작업이 이 답안을 누락하지 않도록 한다.
+        const [revision] = await tx
+          .select({ status: questionRevisions.status })
+          .from(questionRevisions)
+          .where(eq(questionRevisions.id, questionRevisionId))
+          .for('share');
+
+        if (revision == null) throw new AppError('NOT_FOUND');
+        if (revision.status === 'voided') {
+          throw new AppError('STATE_CONFLICT', {
+            userMessage: '이 문제는 학습에서 제외됐어요. 새로고침 후 이어서 풀어주세요.',
+            details: { revisionStatus: 'voided' },
+          });
+        }
+
         await tx.insert(answers).values({
           sessionId,
           questionRevisionId,
@@ -507,8 +523,11 @@ interface SessionProgress {
   correctValid: number;
 }
 
-async function countProgress(sessionId: string): Promise<SessionProgress> {
-  const rows = await db
+async function countProgress(
+  sessionId: string,
+  executor: Parameters<Parameters<typeof db.transaction>[0]>[0] | typeof db = db,
+): Promise<SessionProgress> {
+  const rows = await executor
     .select({
       status: questionRevisions.status,
       selectedIndex: answers.selectedIndex,
@@ -552,67 +571,78 @@ export async function completeSession(
   sessionId: string,
   now: Date,
 ): Promise<CompleteResult> {
-  const [session] = await db
-    .select()
-    .from(studySessions)
-    .where(eq(studySessions.id, sessionId))
-    .limit(1);
+  return await db.transaction(async (tx) => {
+    // 같은 세션의 연타뿐 아니라 자정 유예창의 전날/오늘 완료도 직렬화한다.
+    // 잠금을 얻은 뒤 완료 상태와 streak 를 읽어야 두 요청이 모두 새 완료가 되거나
+    // 늦게 끝난 요청이 최신 streak 날짜를 과거로 되돌리는 일이 없다.
+    const [profile] = await tx
+      .select({
+        streakDays: users.streakDays,
+        lastStreakDate: users.lastStreakDate,
+        identityStatus: users.identityStatus,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .for('update');
 
-  if (session == null) throw new AppError('NOT_FOUND');
-  if (session.userId !== userId) throw new AppError('NOT_FOUND');
+    if (profile == null || profile.identityStatus === 'deleted') {
+      throw new AppError('USER_DELETED');
+    }
+    if (profile.identityStatus !== 'active') throw new AppError('FORBIDDEN');
 
-  const studyDate = assertStudyDate(session.studyDate);
+    const [session] = await tx
+      .select()
+      .from(studySessions)
+      .where(eq(studySessions.id, sessionId))
+      .limit(1);
 
-  const [profile] = await db
-    .select({ streakDays: users.streakDays, lastStreakDate: users.lastStreakDate })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
+    if (session == null || session.userId !== userId) throw new AppError('NOT_FOUND');
 
-  if (session.completedAt != null) {
-    // 재요청은 오류가 아니다. 같은 결과를 그대로 돌려준다.
-    return {
-      session: {
-        id: session.id,
-        studyDate,
-        score: session.score ?? 0,
-        completedAt: session.completedAt.toISOString(),
+    const studyDate = assertStudyDate(session.studyDate);
+
+    if (session.completedAt != null) {
+      // 재요청은 오류가 아니다. 같은 결과를 그대로 돌려준다.
+      return {
+        session: {
+          id: session.id,
+          studyDate,
+          score: session.score ?? 0,
+          completedAt: session.completedAt.toISOString(),
+        },
+        streak: {
+          days: profile.streakDays,
+          lastStreakDate: assertStudyDate(profile.lastStreakDate ?? studyDate),
+        },
+        validCount: (await countProgress(sessionId, tx)).valid,
+        alreadyCompleted: true,
+      };
+    }
+
+    if (!canCompleteSessionAt(studyDate, now)) {
+      throw new AppError('STATE_CONFLICT', {
+        userMessage: '이 세션은 마감됐어요. 오늘 문제를 새로 시작해주세요.',
+      });
+    }
+
+    const progress = await countProgress(sessionId, tx);
+
+    if (progress.answeredValid < progress.valid) {
+      throw new AppError('STATE_CONFLICT', {
+        userMessage: '아직 풀지 않은 문제가 있어요.',
+        details: { answered: progress.answeredValid, required: progress.valid },
+      });
+    }
+
+    const completedAt = now;
+    const streak = nextStreak(
+      {
+        streakDays: profile.streakDays,
+        lastStreakDate:
+          profile.lastStreakDate == null ? null : assertStudyDate(profile.lastStreakDate),
       },
-      streak: {
-        days: profile?.streakDays ?? 0,
-        lastStreakDate: assertStudyDate(profile?.lastStreakDate ?? studyDate),
-      },
-      validCount: (await countProgress(sessionId)).valid,
-      alreadyCompleted: true,
-    };
-  }
+      studyDate,
+    );
 
-  if (!canCompleteSessionAt(studyDate, now)) {
-    throw new AppError('STATE_CONFLICT', {
-      userMessage: '이 세션은 마감됐어요. 오늘 문제를 새로 시작해주세요.',
-    });
-  }
-
-  const progress = await countProgress(sessionId);
-
-  if (progress.answeredValid < progress.valid) {
-    throw new AppError('STATE_CONFLICT', {
-      userMessage: '아직 풀지 않은 문제가 있어요.',
-      details: { answered: progress.answeredValid, required: progress.valid },
-    });
-  }
-
-  const completedAt = new Date();
-  const streak = nextStreak(
-    {
-      streakDays: profile?.streakDays ?? 0,
-      lastStreakDate:
-        profile?.lastStreakDate == null ? null : assertStudyDate(profile.lastStreakDate),
-    },
-    studyDate,
-  );
-
-  await db.transaction(async (tx) => {
     await tx
       .update(studySessions)
       .set({ score: progress.correctValid, completedAt })
@@ -626,17 +656,17 @@ export async function completeSession(
         lastSeenAt: completedAt,
       })
       .where(eq(users.id, userId));
-  });
 
-  return {
-    session: {
-      id: session.id,
-      studyDate,
-      score: progress.correctValid,
-      completedAt: completedAt.toISOString(),
-    },
-    streak: { days: streak.streakDays, lastStreakDate: streak.lastStreakDate ?? studyDate },
-    validCount: progress.valid,
-    alreadyCompleted: false,
-  };
+    return {
+      session: {
+        id: session.id,
+        studyDate,
+        score: progress.correctValid,
+        completedAt: completedAt.toISOString(),
+      },
+      streak: { days: streak.streakDays, lastStreakDate: streak.lastStreakDate ?? studyDate },
+      validCount: progress.valid,
+      alreadyCompleted: false,
+    };
+  });
 }

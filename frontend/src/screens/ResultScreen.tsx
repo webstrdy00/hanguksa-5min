@@ -8,6 +8,7 @@ import {
   AsyncBoundary,
   BottomCta,
   ErrorState,
+  EmptyState,
   LoadingState,
   Screen,
   Section,
@@ -35,13 +36,15 @@ export function ResultScreen(): JSX.Element {
   }, []);
 
   const alreadyCompleted = session.data?.session.completedAt != null;
+  const hasUnanswered = session.data?.items.some((item) => !item.voided && !item.answered) === true;
 
   useEffect(() => {
-    if (sessionId == null || requested.current || alreadyCompleted) return;
+    if (sessionId == null || requested.current || alreadyCompleted || hasUnanswered) return;
     requested.current = true;
     complete.mutate(undefined, {
       onSuccess: (data) => {
         // 대표 전환 지표 (08 §6). 점수와 연속일수만 남기고 문항 정보는 넣지 않는다.
+        if (data.alreadyCompleted) return;
         trackComplete('daily_study', {
           score: data.session.score,
           valid_count: data.validCount,
@@ -49,12 +52,26 @@ export function ResultScreen(): JSX.Element {
         });
       },
     });
-  }, [sessionId, alreadyCompleted, complete]);
+  }, [sessionId, alreadyCompleted, hasUnanswered, complete]);
 
   return (
     <Screen>
       <AsyncBoundary query={session} loadingLabel="결과를 정리하고 있어요">
         {(data) => {
+          if (!alreadyCompleted && hasUnanswered) {
+            return (
+              <EmptyState
+                title="아직 풀지 않은 문제가 있어요"
+                description="남은 문제를 풀면 오늘의 결과를 확인할 수 있어요."
+                action={
+                  <ActionButton onClick={() => void navigate('/study', { replace: true })}>
+                    이어서 풀기
+                  </ActionButton>
+                }
+              />
+            );
+          }
+
           const answered = data.items.filter((item) => !item.voided && item.answered);
           const wrongItems = answered.filter((item) => item.isCorrect === false);
           const voidedCount = data.items.filter((item) => item.voided).length;
@@ -130,7 +147,11 @@ export function ResultScreen(): JSX.Element {
                   <h2 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 10px' }}>
                     내일은 이렇게 준비해요
                   </h2>
-                  {wrongEras.length === 0 ? (
+                  {validCount === 0 ? (
+                    <p style={{ margin: 0, fontSize: 15, color: '#4e5968' }}>
+                      오늘은 채점할 문항이 없어요. 내일 새로운 문제로 이어갈게요.
+                    </p>
+                  ) : wrongEras.length === 0 ? (
                     <p style={{ margin: 0, fontSize: 15, color: '#4e5968' }}>
                       오늘은 모두 맞혔어요. 내일은 새로운 문제로 이어갈게요.
                     </p>
