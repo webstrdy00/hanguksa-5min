@@ -1,0 +1,40 @@
+{
+  "observedDateKst": "2026-09-30",
+  "source": "Apps in Toss console, authenticated read-only observation through Aside",
+  "publishedBundle": "20260921-6",
+  "consoleReleaseTime": "2026. 09. 30 19:23",
+  "eventWindow": "최근 14일 발생 수",
+  "events": {
+    "appsintoss_app_visit::impression__enter_appsintoss": 18,
+    "screen_home": 6,
+    "click_start_daily_study": 2,
+    "screen_study": 3,
+    "click_answer": 5,
+    "complete_daily_study": 1,
+    "screen_wrong_notes": 0,
+    "screen_progress": 0
+  },
+  "metricsConfiguration": {
+    "activation": "7일 이후 재방문",
+    "conversion": "오늘 학습 완료 / complete_daily_study"
+  },
+  "limitations": [
+    "이벤트 발생 횟수이며 고유 사용자 또는 고유 세션 수가 아닙니다.",
+    "조회 기간에는 이전 공개 버전과 운영자·테스터의 활동이 포함될 수 있습니다.",
+    "완료 1건 / 시작 클릭 2건을 완료율 50%로 계산하지 않습니다.",
+    "9월30일 출시 이후 사용자 묶음의 D1/D7 결과는 아직 관측할 수 없습니다.",
+    "콘솔 7일 이후 재방문과 첫 학습 완료 기준 정확한 D7 코호트는 같은 정의가 아닙니다."
+  ],
+  "measurementDefinitions": {
+    "dailyStudyCompletion": "동일 관측 대상·기간의 완료 학습 세션 수 / 시작 학습 세션 수",
+    "consoleConversion": "콘솔에서 정의한 전환 사용자 수 / 방문 사용자 수. 세션 완료율과 별도로 보고",
+    "firstCompletionRetention": "첫 학습 완료일별 사용자 묶음의 D1/D7 재방문. 추적 가능하고 관측 기간이 지난 대상만 분모에 포함",
+    "firstQuestionTiming": "신규 로컬 계측은 문서 시작부터 첫 풀이 가능한 문제까지와 학습 화면 진입부터의 시간을 분리. 전자는 사용자 대기·온보딩 시간도 포함하며 순수 서버 응답 시간이 아님"
+  },
+  "followUpDatesKst": {
+    "firstPostReleaseDailyReview": "2026-10-01",
+    "firstPostReleaseSevenDayReview": "2026-10-07"
+  },
+  "automationScheduled": false,
+  "paidChanges": false
+}
