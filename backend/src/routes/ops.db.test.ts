@@ -11,7 +11,9 @@ import {
   truncateAll,
 } from '../db/test-helpers.ts';
 import type { AppInstance } from '../http/types.ts';
-import { runPendingMasteryRecalcJobs } from '../services/mastery-jobs.ts';
+import { startPeriodicWorker } from '../jobs/periodic-worker.ts';
+import type { JobRunResult } from '../services/mastery-jobs.ts';
+import { runNextMasteryRecalcJob, runPendingMasteryRecalcJobs } from '../services/mastery-jobs.ts';
 
 /**
  * 오류 신고 · retire/void · 재계산 job · kill switch 통합 테스트 (07 §9, 09 §2, 공통 02 §7).
@@ -281,17 +283,29 @@ describe('관리자 신고 처리', () => {
 });
 
 describe('E2E P0: void 후 정답률 보정 (08 §5)', () => {
-  it('신고 → void → 재계산 job 으로 통계가 보정되고 streak 는 유지된다', async () => {
+  it('신고 → void → 재계산 워커로 통계가 보정되고 완료 기록과 streak 는 유지된다', async () => {
     await seedQuestions(6);
 
     const session = await startToday();
     // 전부 오답으로 제출한다.
     await answerAll(session, 3);
-    await app.inject({
+    const completed = await app.inject({
       method: 'POST',
       url: `/v1/sessions/${session.session.id}/complete`,
       headers: auth(),
     });
+    expect(completed.statusCode).toBe(200);
+
+    const [sessionBefore] = await sql<{ score: number; completed_at: string | null }[]>`
+      select score, completed_at::text as completed_at from study_sessions
+      where id = ${session.session.id}
+    `;
+    const answersBefore = await sql<{ dump: string }[]>`
+      select row_to_json(answers)::text as dump from answers
+      where session_id = ${session.session.id} order by id
+    `;
+    expect(sessionBefore?.completed_at).toBeTypeOf('string');
+    expect(answersBefore).toHaveLength(5);
 
     const before = await app.inject({ method: 'GET', url: '/v1/progress', headers: auth() });
     const beforeBody = before.json<{
@@ -309,33 +323,101 @@ describe('E2E P0: void 후 정답률 보정 (08 §5)', () => {
     expect(voided.statusCode).toBe(200);
 
     // void 트랜잭션에서 재계산 작업이 생겼다.
-    const [job] = await sql<{ status: string; reason: string }[]>`
-      select status, reason from mastery_recalc_jobs
+    const [job] = await sql<{ id: string; status: string; reason: string }[]>`
+      select id, status, reason from mastery_recalc_jobs
     `;
     expect(job?.status).toBe('pending');
     expect(job?.reason).toBe('question_voided');
 
-    // 배치가 처리한다.
-    const results = await runPendingMasteryRecalcJobs();
-    expect(results).toHaveLength(1);
-    expect(results[0]?.status).toBe('completed');
-    expect(results[0]?.processedUsers).toBe(1);
+    // 서버와 같은 워커가 실제 재계산 배치를 실행한다.
+    let finish!: (results: JobRunResult[]) => void;
+    let fail!: (error: Error) => void;
+    const completion = new Promise<JobRunResult[]>((resolve, reject) => {
+      finish = resolve;
+      fail = reject;
+    });
+    const stopWorker = startPeriodicWorker(
+      async () => {
+        finish(await runPendingMasteryRecalcJobs());
+      },
+      () => fail(new Error('숙련도 재계산 워커 실행 실패')),
+    );
 
-    const after = await app.inject({ method: 'GET', url: '/v1/progress', headers: auth() });
-    const afterBody = after.json<{
-      eras: { era: string; seenCount: number; accuracyPercent: number | null }[];
-      streak: { days: number };
-    }>();
+    try {
+      const results = await completion;
+      expect(results).toEqual([{ jobId: job!.id, status: 'completed', processedUsers: 1 }]);
 
-    // void 문항이 집계에서 빠졌다.
-    expect(afterBody.eras.find((era) => era.era === 'goryeo')?.seenCount).toBe(4);
-    // 문항 오류로 streak 를 박탈하지 않는다 (09 §2).
-    expect(afterBody.streak.days).toBe(1);
+      const [processedJob] = await sql<
+        {
+          status: string;
+          total_users: number;
+          processed_users: number;
+          completed_at: Date | null;
+        }[]
+      >`
+        select status, total_users, processed_users, completed_at from mastery_recalc_jobs
+        where id = ${job!.id}
+      `;
+      expect(processedJob?.status).toBe('completed');
+      expect(processedJob?.total_users).toBe(1);
+      expect(processedJob?.processed_users).toBe(1);
+      expect(processedJob?.completed_at).toBeInstanceOf(Date);
 
-    const [session_] = await sql<{ score: number; completed_at: Date }[]>`
-      select score, completed_at from study_sessions
+      const after = await app.inject({ method: 'GET', url: '/v1/progress', headers: auth() });
+      const afterBody = after.json<{
+        eras: { era: string; seenCount: number; accuracyPercent: number | null }[];
+        streak: { days: number };
+      }>();
+
+      // void 문항이 집계에서 빠졌다.
+      expect(afterBody.eras.find((era) => era.era === 'goryeo')?.seenCount).toBe(4);
+      // 문항 오류로 streak 를 박탈하지 않는다 (09 §2).
+      expect(afterBody.streak).toEqual(beforeBody.streak);
+
+      const [sessionAfter] = await sql<{ score: number; completed_at: string | null }[]>`
+        select score, completed_at::text as completed_at from study_sessions
+        where id = ${session.session.id}
+      `;
+      const answersAfter = await sql<{ dump: string }[]>`
+        select row_to_json(answers)::text as dump from answers
+        where session_id = ${session.session.id} order by id
+      `;
+      expect(sessionAfter).toEqual(sessionBefore);
+      expect(answersAfter.map((row) => row.dump)).toEqual(answersBefore.map((row) => row.dump));
+    } finally {
+      await stopWorker();
+    }
+  });
+
+  it('동시 워커가 하나의 pending 작업을 중복 선점하지 않는다', async () => {
+    await seedQuestions(6);
+    const session = await startToday();
+    await answerAll(session, 0);
+    const voided = await setStatus(session.items[0]!.questionRevisionId, 'voided', '사실 오류');
+    expect(voided.statusCode).toBe(200);
+
+    const jobs = await sql<{ id: string; status: string }[]>`
+      select id, status from mastery_recalc_jobs
     `;
-    expect(session_?.completed_at).not.toBeNull();
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]?.status).toBe('pending');
+
+    const results = await Promise.all([runNextMasteryRecalcJob(), runNextMasteryRecalcJob()]);
+    expect(results.filter((result) => result === null)).toHaveLength(1);
+    expect(results.filter((result) => result !== null)).toEqual([
+      { jobId: jobs[0]!.id, status: 'completed', processedUsers: 1 },
+    ]);
+
+    const [job] = await sql<
+      { status: string; total_users: number; processed_users: number; completed_at: Date | null }[]
+    >`
+      select status, total_users, processed_users, completed_at from mastery_recalc_jobs
+      where id = ${jobs[0]!.id}
+    `;
+    expect(job?.status).toBe('completed');
+    expect(job?.total_users).toBe(1);
+    expect(job?.processed_users).toBe(1);
+    expect(job?.completed_at).toBeInstanceOf(Date);
   });
 
   it('재계산 작업은 멱등하다', async () => {

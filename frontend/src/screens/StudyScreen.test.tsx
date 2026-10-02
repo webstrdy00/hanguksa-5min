@@ -1,10 +1,25 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { StrictMode } from 'react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { queryKeys } from '../api/hooks.ts';
 import type { AnswerResponse, SessionResponse } from '../api/types.ts';
 import { StudyScreen } from './StudyScreen.tsx';
+
+const { trackImpression, scheduleFirstQuestionReady } = vi.hoisted(() => ({
+  trackImpression: vi.fn(),
+  scheduleFirstQuestionReady:
+    vi.fn<typeof import('../analytics/study-performance.ts').scheduleFirstQuestionReady>(),
+}));
+vi.mock('../analytics/events.ts', () => ({
+  trackScreen: vi.fn(),
+  trackClick: vi.fn(),
+  trackOperational: vi.fn(),
+  trackImpression,
+}));
+vi.mock('../analytics/study-performance.ts', () => ({ scheduleFirstQuestionReady }));
 
 /**
  * 문제/해설 화면 테스트.
@@ -54,12 +69,13 @@ const answerResponse: AnswerResponse = {
   replayed: false,
 };
 
-function renderScreen() {
-  const client = new QueryClient({
+function renderScreen(
+  strict = false,
+  client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
-
-  return render(
+  }),
+) {
+  const content = (
     <QueryClientProvider client={client}>
       <MemoryRouter>
         <Routes>
@@ -67,8 +83,10 @@ function renderScreen() {
           <Route path="/result" element={<h1>테스트 결과 화면</h1>} />
         </Routes>
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+
+  return render(strict ? <StrictMode>{content}</StrictMode> : content);
 }
 
 function mockFetch(handler: (url: string, init?: RequestInit) => unknown) {
@@ -85,6 +103,8 @@ function mockFetch(handler: (url: string, init?: RequestInit) => unknown) {
 
 beforeEach(() => {
   vi.stubEnv('VITE_API_BASE_URL', 'http://test.local');
+  trackImpression.mockClear();
+  scheduleFirstQuestionReady.mockReset();
 });
 
 afterEach(() => {
@@ -360,5 +380,236 @@ describe('StudyScreen', () => {
 
     expect(screen.getByRole('dialog', { name: '문항 오류 제보' })).toBeTruthy();
     expect(screen.getByText('고른 답은 전송되지 않아요.')).toBeTruthy();
+  });
+});
+
+describe('StudyScreen first usable question impression', () => {
+  let frames: Map<number, FrameRequestCallback>;
+
+  function advanceFrame() {
+    act(() => {
+      const callbacks = [...frames.values()];
+      frames.clear();
+      for (const callback of callbacks) callback(0);
+    });
+  }
+
+  function cachedClient(data: SessionResponse = session) {
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, refetchOnMount: false },
+        mutations: { retry: false },
+      },
+    });
+    client.setQueryData(queryKeys.session, data);
+    return client;
+  }
+
+  beforeEach(async () => {
+    // Reset only the actual timing module's lifetime, while the screen keeps its React contexts.
+    vi.resetModules();
+    const timing = await vi.importActual<typeof import('../analytics/study-performance.ts')>(
+      '../analytics/study-performance.ts',
+    );
+    scheduleFirstQuestionReady.mockImplementation(timing.scheduleFirstQuestionReady);
+    frames = new Map();
+    let frameId = 0;
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.set(++frameId, callback);
+      return frameId;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id));
+    vi.spyOn(performance, 'now').mockReturnValue(500);
+  });
+
+  it('does not emit while the query is loading', () => {
+    vi.stubGlobal('fetch', () => new Promise<Response>(() => {}));
+    renderScreen();
+    expect(screen.getByText('오늘의 문제를 준비하고 있어요')).toBeTruthy();
+    advanceFrame();
+    advanceFrame();
+    expect(trackImpression).not.toHaveBeenCalled();
+  });
+
+  it('cancels pending timing when the query errors even if cached questions remain', async () => {
+    const client = cachedClient();
+    renderScreen(false, client);
+    expect(screen.getByText('문항 0 입니다')).toBeTruthy();
+    advanceFrame();
+    await act(async () => {
+      client
+        .getQueryCache()
+        .find({ queryKey: queryKeys.session })!
+        .setState({
+          status: 'error',
+          error: new Error('MOCK private error detail'),
+        });
+    });
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    expect(screen.queryByText('문항 0 입니다')).toBeNull();
+    advanceFrame();
+    advanceFrame();
+    expect(trackImpression).not.toHaveBeenCalled();
+  });
+
+  const unavailable: Array<{ name: string; data: SessionResponse; button: string }> = [
+    {
+      name: 'answered-only',
+      data: { ...session, items: session.items.map((item) => ({ ...item, answered: true })) },
+      button: '결과 보기',
+    },
+    {
+      name: 'explanation with later unanswered questions',
+      data: { ...session, items: [makeItem(0, { answered: true }), ...session.items.slice(1)] },
+      button: '다음 문제',
+    },
+    {
+      name: 'void with later unanswered questions',
+      data: { ...session, items: [makeItem(0, { voided: true }), ...session.items.slice(1)] },
+      button: '다음 문제',
+    },
+    {
+      name: 'completed-only',
+      data: {
+        ...session,
+        session: { ...session.session, completedAt: '2026-08-23T00:05:00.000Z' },
+        items: session.items.map((item) => ({ ...item, answered: true })),
+      },
+      button: '결과 보기',
+    },
+    { name: 'empty', data: { ...session, items: [] }, button: '홈으로' },
+    {
+      name: 'blank prompt',
+      data: { ...session, items: [makeItem(0, { prompt: ' ' })] },
+      button: '답 제출하기',
+    },
+    {
+      name: 'missing choices',
+      data: { ...session, items: [makeItem(0, { choices: [] })] },
+      button: '답 제출하기',
+    },
+    {
+      name: 'no choice of answers',
+      data: { ...session, items: [makeItem(0, { choices: ['보기 1'] })] },
+      button: '답 제출하기',
+    },
+    {
+      name: 'blank choice',
+      data: { ...session, items: [makeItem(0, { choices: ['보기 1', ' '] })] },
+      button: '답 제출하기',
+    },
+  ];
+
+  it.each(unavailable)('does not emit for $name', ({ data, button }) => {
+    renderScreen(false, cachedClient(data));
+    expect(screen.getByRole('button', { name: button })).toBeTruthy();
+    advanceFrame();
+    advanceFrame();
+    expect(trackImpression).not.toHaveBeenCalled();
+  });
+
+  it.each(['voided', 'answered'] as const)(
+    'waits until leaving the %s question for a usable one',
+    async (flag) => {
+      renderScreen(
+        false,
+        cachedClient({
+          ...session,
+          items: [makeItem(0, { [flag]: true }), ...session.items.slice(1)],
+        }),
+      );
+      advanceFrame();
+      advanceFrame();
+      expect(trackImpression).not.toHaveBeenCalled();
+
+      vi.mocked(performance.now).mockReturnValue(900);
+      await userEvent.click(screen.getByRole('button', { name: '다음 문제' }));
+      expect(screen.getByText('문항 1 입니다')).toBeTruthy();
+      advanceFrame();
+      vi.mocked(performance.now).mockReturnValue(1_500);
+      advanceFrame();
+      expect(trackImpression).toHaveBeenCalledExactlyOnceWith('first_question_ready', {
+        navigation_to_first_question_ready_ms: 1_500,
+        study_entry_to_first_question_ready_ms: 1_000,
+      });
+    },
+  );
+
+  it('does not emit during answer submission or a mutation explanation with stale unanswered data', async () => {
+    let respond: ((response: Response) => void) | undefined;
+    vi.stubGlobal('fetch', (input: string) => {
+      if (!String(input).includes('/answer')) return Promise.resolve(Response.json(session));
+      return new Promise<Response>((resolve) => {
+        respond = resolve;
+      });
+    });
+    renderScreen(false, cachedClient());
+    await userEvent.click(screen.getAllByRole('radio')[1]!);
+    await userEvent.click(screen.getByRole('button', { name: '답 제출하기' }));
+    expect(screen.getByRole('button', { name: '채점하고 있어요' })).toBeTruthy();
+    advanceFrame();
+    advanceFrame();
+    expect(trackImpression).not.toHaveBeenCalled();
+
+    respond!(Response.json(answerResponse));
+    await screen.findByText('정답 근거 해설입니다');
+    advanceFrame();
+    advanceFrame();
+    expect(trackImpression).not.toHaveBeenCalled();
+  });
+
+  it('does not emit while an answer error is displayed', async () => {
+    vi.stubGlobal('fetch', () => Promise.reject(new Error('MOCK private answer error')));
+    renderScreen(false, cachedClient());
+    await userEvent.click(screen.getAllByRole('radio')[1]!);
+    await userEvent.click(screen.getByRole('button', { name: '답 제출하기' }));
+    await screen.findByRole('alert');
+    advanceFrame();
+    advanceFrame();
+    expect(trackImpression).not.toHaveBeenCalled();
+  });
+
+  it.each([0, 1])(
+    'unmounting after %i frames leaves the first usable impression available',
+    (count) => {
+      const first = renderScreen(true, cachedClient());
+      for (let index = 0; index < count; index++) advanceFrame();
+      first.unmount();
+      advanceFrame();
+      advanceFrame();
+      expect(trackImpression).not.toHaveBeenCalled();
+
+      vi.mocked(performance.now).mockReturnValue(700);
+      renderScreen(true, cachedClient());
+      advanceFrame();
+      vi.mocked(performance.now).mockReturnValue(1_500);
+      advanceFrame();
+      expect(trackImpression).toHaveBeenCalledExactlyOnceWith('first_question_ready', {
+        navigation_to_first_question_ready_ms: 1_500,
+        study_entry_to_first_question_ready_ms: 800,
+      });
+    },
+  );
+
+  it('emits once across StrictMode, selection rerenders and remounts, without sensitive parameters', async () => {
+    const first = renderScreen(true, cachedClient());
+    expect(screen.getByText('문항 0 입니다')).toBeTruthy();
+    advanceFrame();
+    expect(trackImpression).not.toHaveBeenCalled();
+    vi.mocked(performance.now).mockReturnValue(1_500);
+    advanceFrame();
+    expect(trackImpression).toHaveBeenCalledExactlyOnceWith('first_question_ready', {
+      navigation_to_first_question_ready_ms: 1_500,
+      study_entry_to_first_question_ready_ms: 1_000,
+    });
+
+    await userEvent.click(screen.getAllByRole('radio')[1]!);
+    advanceFrame();
+    advanceFrame();
+    first.unmount();
+    renderScreen(true, cachedClient());
+    advanceFrame();
+    advanceFrame();
+    expect(trackImpression).toHaveBeenCalledTimes(1);
   });
 });

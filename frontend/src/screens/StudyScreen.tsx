@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSubmitAnswer, useTodaySession } from '../api/hooks.ts';
 import { ERA_LABELS, TOPIC_LABELS, type SessionItem } from '../api/types.ts';
 import { trackClick, trackOperational, trackScreen } from '../analytics/events.ts';
+import { scheduleFirstQuestionReady } from '../analytics/study-performance.ts';
 import { ReportDialog } from '../components/ReportDialog.tsx';
 import {
   ActionButton,
@@ -30,6 +31,7 @@ import {
 export function StudyScreen(): JSX.Element {
   const navigate = useNavigate();
   const session = useTodaySession(true);
+  const [studyEntryAtMs] = useState(() => performance.now());
   const [cursor, setCursor] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
   const [reportTarget, setReportTarget] = useState<string | null>(null);
@@ -43,6 +45,23 @@ export function StudyScreen(): JSX.Element {
 
   const items = useMemo(() => session.data?.items ?? [], [session.data]);
   const current: SessionItem | undefined = items[cursor];
+  const showExplanation = submitAnswer.data != null || current?.answered === true;
+  const questionReady =
+    session.isSuccess &&
+    current != null &&
+    current.voided === false &&
+    current.answered === false &&
+    !showExplanation &&
+    !submitAnswer.isPending &&
+    !submitAnswer.isError &&
+    current.prompt.trim().length > 0 &&
+    current.choices.length >= 2 &&
+    current.choices.every((choice) => choice.trim().length > 0);
+
+  // Cancel a pending impression during the commit, before a now-unusable view can paint.
+  useLayoutEffect(() => {
+    return questionReady ? scheduleFirstQuestionReady(studyEntryAtMs) : undefined;
+  }, [questionReady, studyEntryAtMs]);
 
   /** 아직 답하지 않은 유효 문항이 있는지 */
   // 09 §2: 오류 문항이 사용자에게 노출된 사실을 운영 지표로 남긴다.
@@ -116,7 +135,6 @@ export function StudyScreen(): JSX.Element {
           }
 
           const answer = submitAnswer.data;
-          const showExplanation = answer != null || current.answered;
           const correctIndex = answer?.correctIndex ?? current.correctIndex;
           const explanation = answer?.explanation ?? current.explanation;
           const isCorrect = answer?.isCorrect ?? current.isCorrect;

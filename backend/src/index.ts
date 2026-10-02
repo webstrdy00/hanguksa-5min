@@ -3,14 +3,15 @@ import { buildApp } from './app.ts';
 import { env } from './config/env.ts';
 import { closeDb } from './db/client.ts';
 import { closeDeletionJournal } from './deletion-journal/runtime.ts';
-import { startDeletionWorker } from './jobs/deletion-worker.ts';
 import { createDeletionAlerts, createMonitoredDeletionBatch } from './jobs/deletion-alerts.ts';
+import { startPeriodicWorker } from './jobs/periodic-worker.ts';
 import { logger } from './observability/logger.ts';
 import {
   getDeletionQueueHealth,
   replayDeletionJournal,
   runPendingDeletionJobs,
 } from './services/deletion.ts';
+import { runPendingMasteryRecalcJobs } from './services/mastery-jobs.ts';
 
 /**
  * 서버 진입점.
@@ -18,9 +19,9 @@ import {
  */
 async function main(): Promise<void> {
   const app = await buildApp();
-  const deletionWorker: { stop?: () => Promise<void> } = {};
+  const stopWorkers: (() => Promise<void>)[] = [];
   app.addHook('onClose', async () => {
-    await deletionWorker.stop?.();
+    await Promise.all(stopWorkers.map((stop) => stop()));
   });
 
   const shutdown = (signal: string): void => {
@@ -48,15 +49,21 @@ async function main(): Promise<void> {
 
   await replayDeletionJournal();
   await app.listen({ host: env.HOST, port: env.PORT });
-  deletionWorker.stop = startDeletionWorker(
-    createMonitoredDeletionBatch(
-      () => runPendingDeletionJobs(),
-      () => getDeletionQueueHealth(),
-      createDeletionAlerts(env.DISCORD_ALERT_WEBHOOK_URL, env.APP_ENV, () =>
-        logger.error('deletion_alert_delivery_failed'),
+  stopWorkers.push(
+    startPeriodicWorker(
+      createMonitoredDeletionBatch(
+        () => runPendingDeletionJobs(),
+        () => getDeletionQueueHealth(),
+        createDeletionAlerts(env.DISCORD_ALERT_WEBHOOK_URL, env.APP_ENV, () =>
+          logger.error('deletion_alert_delivery_failed'),
+        ),
       ),
+      () => logger.error('deletion_worker_failed'),
     ),
-    () => logger.error('deletion_worker_failed'),
+    startPeriodicWorker(
+      () => runPendingMasteryRecalcJobs(),
+      () => logger.error('mastery_recalc_worker_failed'),
+    ),
   );
   logger.info({ enabled: env.DISCORD_ALERT_WEBHOOK_URL != null }, 'deletion_alerts_configured');
   logger.info({ host: env.HOST, port: env.PORT }, 'server_started');

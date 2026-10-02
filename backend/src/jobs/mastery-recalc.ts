@@ -8,7 +8,8 @@ import { runPendingMasteryRecalcJobs } from '../services/mastery-jobs.ts';
  *   pnpm --filter @hanguksa/backend jobs:mastery
  *
  * void 처리로 쌓인 재계산 작업을 처리한다.
- * 정기 실행은 운영 환경의 스케줄러(cron 등)에 연결한다.
+ * 서버는 기동 시 및 이전 배치 종료 30초 후 자동 처리한다.
+ * 이 CLI는 운영자가 같은 큐를 수동 처리할 때 사용한다.
  * 재실행해도 안전하다. 작업 처리는 멱등하다.
  */
 async function main(): Promise<void> {

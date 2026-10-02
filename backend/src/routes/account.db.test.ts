@@ -10,7 +10,7 @@ import {
   truncateAll,
 } from '../db/test-helpers.ts';
 import type { AppInstance } from '../http/types.ts';
-import { startDeletionWorker } from '../jobs/deletion-worker.ts';
+import { startPeriodicWorker } from '../jobs/periodic-worker.ts';
 import { getDeletionQueueHealth, runPendingDeletionJobs } from '../services/deletion.ts';
 
 /**
@@ -263,7 +263,7 @@ describe('삭제 이행 배치 (하드게이트 P0: 데이터 맵 추적)', () =
       payload: { confirm: '삭제' },
     });
     let failed = false;
-    const stop = startDeletionWorker(
+    const stop = startPeriodicWorker(
       () => runPendingDeletionJobs(),
       () => {
         failed = true;

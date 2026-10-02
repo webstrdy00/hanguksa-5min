@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import App from '../App.tsx';
 import type { ExamsResponse } from '../api/types.ts';
 
@@ -12,6 +12,12 @@ vi.mock('../auth/context.ts', () => ({
 vi.mock('./HomeScreen.tsx', () => ({
   HomeScreen: () => <h1>테스트 홈</h1>,
 }));
+
+beforeAll(async () => {
+  // 실제 화면을 미리 로드해 개발용 모듈 변환 시간이 DOM 탐색 제한에 섞이지 않게 한다.
+  // 검증 대상인 목표 저장·캐시·라우팅 흐름과 App의 lazy 경로는 그대로 사용한다.
+  await import('./OnboardingScreen.tsx');
+});
 
 afterEach(() => {
   cleanup();

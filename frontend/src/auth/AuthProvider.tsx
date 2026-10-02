@@ -25,25 +25,59 @@ export function AuthProvider({ children }: PropsWithChildren): JSX.Element {
   const [error, setError] = useState<AuthState['error']>(null);
   const adapter = useMemo(() => createIdentityAdapter(), []);
   const inFlight = useRef<Promise<string | null> | null>(null);
+  const active = useRef(false);
+  const cancelBackoff = useRef<(() => void) | null>(null);
 
   const bootstrap = useCallback(async (): Promise<string | null> => {
+    if (!active.current) return null;
     // 동시에 여러 요청이 401 을 받아도 bootstrap 은 한 번만 돈다.
     if (inFlight.current != null) return await inFlight.current;
 
     const run = (async (): Promise<string | null> => {
       try {
         const anonKey = await withNetworkTimeout(() => adapter.getAnonymousKey());
-        const result = await request<BootstrapResponse>('/v1/auth/bootstrap', {
-          method: 'POST',
-          authorized: false,
-          body: { anonKey },
-        });
+        // 429/503만 1초, 2초 후 재시도한다. 식별키는 같은 bootstrap 안에서 재사용한다.
+        for (let attempt = 0; ; attempt += 1) {
+          if (!active.current) return null;
+          try {
+            const result = await request<BootstrapResponse>('/v1/auth/bootstrap', {
+              method: 'POST',
+              authorized: false,
+              body: { anonKey },
+            });
 
-        setAccessToken(result.accessToken);
-        setStatus('authenticated');
-        setError(null);
-        return result.accessToken;
+            if (!active.current) return null;
+            setAccessToken(result.accessToken);
+            setStatus('authenticated');
+            setError(null);
+            return result.accessToken;
+          } catch (caught) {
+            if (
+              !(caught instanceof ApiError) ||
+              (caught.status !== 429 && caught.status !== 503) ||
+              attempt >= 2
+            ) {
+              throw caught;
+            }
+            if (!active.current) return null;
+            await new Promise<void>((resolve) => {
+              const timer = setTimeout(
+                () => {
+                  cancelBackoff.current = null;
+                  resolve();
+                },
+                1_000 * 2 ** attempt,
+              );
+              cancelBackoff.current = () => {
+                clearTimeout(timer);
+                cancelBackoff.current = null;
+                resolve();
+              };
+            });
+          }
+        }
       } catch (caught) {
+        if (!active.current) return null;
         setAccessToken(null);
         setStatus('failed');
 
@@ -63,8 +97,11 @@ export function AuthProvider({ children }: PropsWithChildren): JSX.Element {
   }, [adapter]);
 
   useEffect(() => {
+    active.current = true;
     setReauthorizer(bootstrap);
     return () => {
+      active.current = false;
+      cancelBackoff.current?.();
       setReauthorizer(null);
     };
   }, [bootstrap]);
