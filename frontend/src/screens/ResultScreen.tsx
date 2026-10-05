@@ -1,8 +1,10 @@
 import { useEffect, useRef } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { useCompleteSession, useTodaySession } from '../api/hooks.ts';
-import { trackComplete, trackScreen } from '../analytics/events.ts';
-import { ERA_LABELS } from '../api/types.ts';
+import { queryKeys, useCompleteSession, useTodaySession } from '../api/hooks.ts';
+import { reportDailyStudyCompletion } from '../analytics/completion.ts';
+import { trackScreen } from '../analytics/events.ts';
+import { ERA_LABELS, type SessionResponse } from '../api/types.ts';
 import {
   ActionButton,
   AsyncBoundary,
@@ -25,31 +27,57 @@ import {
  */
 export function ResultScreen(): JSX.Element {
   const navigate = useNavigate();
+  const client = useQueryClient();
   const session = useTodaySession(true);
   const sessionId = session.data?.session.id;
   const complete = useCompleteSession(sessionId);
-  const requested = useRef(false);
+  const requested = useRef<string | null>(null);
 
   useEffect(() => {
     trackScreen('result');
   }, []);
 
   const alreadyCompleted = session.data?.session.completedAt != null;
+  const allAnswered = session.data?.items.every((item) => item.voided || item.answered) === true;
 
   useEffect(() => {
-    if (sessionId == null || requested.current || alreadyCompleted) return;
-    requested.current = true;
-    complete.mutate(undefined, {
-      onSuccess: (data) => {
-        // 대표 전환 지표 (08 §6). 점수와 연속일수만 남기고 문항 정보는 넣지 않는다.
-        trackComplete('daily_study', {
+    const data = session.data;
+    if (data == null || data.session.completedAt == null || data.session.score == null) return;
+    // Requery/revisit also recovers a lost completion response or rejected SDK call.
+    // Today-session has no streak value; do not invent one for a recovered event.
+    reportDailyStudyCompletion(client, {
+      sessionId: data.session.id,
+      score: data.session.score,
+      validCount: data.items.filter((item) => !item.voided).length,
+    });
+  }, [client, session.data, session.dataUpdatedAt]);
+
+  useEffect(() => {
+    if (sessionId == null || requested.current === sessionId || alreadyCompleted || !allAnswered) {
+      return;
+    }
+    requested.current = sessionId;
+    // mutateAsync's continuation survives unmount; per-call onSuccess does not.
+    void complete.mutateAsync().then(
+      (data) => {
+        // Inactive queries are only invalidated, not refetched. Persist the server's
+        // completion before a revisit can POST from the old unfinished cache entry.
+        client.setQueryData<SessionResponse>(queryKeys.session, (previous) => {
+          if (previous == null || previous.session.id !== data.session.id) return previous;
+          return { ...previous, session: { ...previous.session, ...data.session } };
+        });
+        reportDailyStudyCompletion(client, {
+          sessionId: data.session.id,
           score: data.session.score,
-          valid_count: data.validCount,
-          streak_days: data.streak.days,
+          validCount: data.validCount,
+          streakDays: data.streak.days,
         });
       },
-    });
-  }, [sessionId, alreadyCompleted, complete]);
+      () => {
+        // Mutation state owns the visible error and retry; analytics stays non-blocking.
+      },
+    );
+  }, [client, sessionId, alreadyCompleted, allAnswered, complete]);
 
   return (
     <Screen>
@@ -59,9 +87,11 @@ export function ResultScreen(): JSX.Element {
           const wrongItems = answered.filter((item) => item.isCorrect === false);
           const voidedCount = data.items.filter((item) => item.voided).length;
 
-          const score = complete.data?.session.score ?? data.session.score;
-          const validCount = complete.data?.validCount ?? answered.length;
-          const streakDays = complete.data?.streak.days;
+          const completed =
+            complete.data?.session.id === data.session.id ? complete.data : undefined;
+          const score = completed?.session.score ?? data.session.score;
+          const validCount = completed?.validCount ?? answered.length;
+          const streakDays = completed?.streak.days;
 
           if (complete.isPending && score == null) {
             return <LoadingState label="오늘 학습을 마무리하고 있어요" />;
@@ -72,9 +102,12 @@ export function ResultScreen(): JSX.Element {
               <ErrorState
                 error={complete.error}
                 onRetry={() => {
-                  requested.current = false;
-                  complete.reset();
-                  session.refetch();
+                  // First recover committed state; only an unfinished session needs another POST.
+                  void session.refetch().then((result) => {
+                    if (result.isError) return;
+                    requested.current = null;
+                    complete.reset();
+                  });
                 }}
               />
             );

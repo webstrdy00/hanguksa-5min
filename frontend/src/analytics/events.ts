@@ -32,15 +32,21 @@ type EventParams = Record<string, string | number | boolean>;
 
 const isDev = import.meta.env.DEV;
 
-function safeLog(operation: () => Promise<void> | undefined, name: string): void {
+function safeLog(operation: () => Promise<void> | undefined, name: string): Promise<boolean> {
   try {
     const result = operation();
+    if (result == null) return Promise.resolve(false);
     // 분석 실패가 사용자 흐름을 막으면 안 된다.
-    void Promise.resolve(result).catch((error: unknown) => {
-      if (isDev) console.warn('[analytics] 전송 실패', name, error);
-    });
-  } catch (error) {
-    if (isDev) console.warn('[analytics] 호출 실패', name, error);
+    return result.then(
+      () => true,
+      () => {
+        if (isDev) console.warn('[analytics] 전송 실패', name);
+        return false;
+      },
+    );
+  } catch {
+    if (isDev) console.warn('[analytics] 호출 실패', name);
+    return Promise.resolve(false);
   }
 }
 
@@ -73,9 +79,12 @@ export function trackImpression(elementName: string, params: EventParams = {}): 
   );
 }
 
-/** 완료 (complete_*) — 전환 지표로 콘솔에 등록하는 이벤트다. */
-export function trackComplete(eventName: string, params: EventParams = {}): void {
-  safeLog(
+/**
+ * 완료 (complete_*) — true 는 SDK Promise resolve일 뿐 플랫폼 수신/집계 확인이 아니다.
+ * 설치된 SDK에는 수신 확인이나 event 단위 idempotency 계약이 없다.
+ */
+export function trackComplete(eventName: string, params: EventParams = {}): Promise<boolean> {
+  return safeLog(
     () =>
       Analytics.log({
         log_name: `complete_${eventName}`,
