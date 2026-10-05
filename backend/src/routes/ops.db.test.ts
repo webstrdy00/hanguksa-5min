@@ -353,15 +353,39 @@ describe('E2E P0: void 후 정답률 보정 (08 §5)', () => {
           total_users: number;
           processed_users: number;
           completed_at: Date | null;
+          last_error: string | null;
         }[]
       >`
-        select status, total_users, processed_users, completed_at from mastery_recalc_jobs
+        select status, total_users, processed_users, completed_at, last_error from mastery_recalc_jobs
         where id = ${job!.id}
       `;
       expect(processedJob?.status).toBe('completed');
       expect(processedJob?.total_users).toBe(1);
       expect(processedJob?.processed_users).toBe(1);
       expect(processedJob?.completed_at).toBeInstanceOf(Date);
+      expect(processedJob?.last_error).toBeNull();
+
+      // completed 만으로 정합성을 판정하지 않는다. 실제 유효 답안을 독립 SQL 로 집계한다.
+      const validAnswers = await sql<
+        { era: string; topic: string; seen_count: number; correct_count: number }[]
+      >`
+        select r.era, r.topic, count(*)::integer as seen_count,
+               count(*) filter (where a.is_correct)::integer as correct_count
+        from answers a
+        join study_sessions s on s.id = a.session_id
+        join study_session_items i
+          on i.session_id = a.session_id and i.question_revision_id = a.question_revision_id
+        join question_revisions r on r.id = a.question_revision_id
+        where s.user_id = (select user_id from study_sessions where id = ${session.session.id})
+          and r.status <> 'voided'
+        group by r.era, r.topic order by r.era, r.topic
+      `;
+      const storedMastery = await sql`
+        select era, topic, seen_count, correct_count from mastery
+        where user_id = (select user_id from study_sessions where id = ${session.session.id})
+        order by era, topic
+      `;
+      expect([...storedMastery]).toEqual([...validAnswers]);
 
       const after = await app.inject({ method: 'GET', url: '/v1/progress', headers: auth() });
       const afterBody = after.json<{

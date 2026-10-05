@@ -1,6 +1,6 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { db } from '../db/client.ts';
-import { questionRevisions } from '../db/schema/content.ts';
+import { questionRevisions, questions } from '../db/schema/content.ts';
 import { users } from '../db/schema/identity.ts';
 import {
   answers,
@@ -9,6 +9,7 @@ import {
   studySessions,
   userQuestionState,
 } from '../db/schema/learning.ts';
+import { withLiveJournalSubject } from '../deletion-journal/runtime.ts';
 import { AppError } from '../http/errors.ts';
 import { assertStudyDate, canCompleteSessionAt, toStudyDate, type StudyDate } from '../lib/kst.ts';
 import {
@@ -280,84 +281,91 @@ export async function submitAnswer(
   selectedIndex: number,
   now: Date,
 ): Promise<AnswerResult> {
-  const [session] = await db
-    .select()
-    .from(studySessions)
-    .where(eq(studySessions.id, sessionId))
-    .limit(1);
+  // 외부 원장 → 사용자 → canonical question → revision 순서로만 잠근다.
+  const { item, isCorrect, replayed } = await withLiveJournalSubject(userId, async () =>
+    db.transaction(async (tx) => {
+      // 전체 재계산도 이 잠금을 snapshot 전에 잡는다. 증분과 전량 교체가 교차하지 않는다.
+      const [user] = await tx
+        .select({ identityStatus: users.identityStatus })
+        .from(users)
+        .where(eq(users.id, userId))
+        .for('update');
+      if (user == null || user.identityStatus === 'deleted') throw new AppError('USER_DELETED');
+      if (user.identityStatus !== 'active') throw new AppError('FORBIDDEN');
 
-  if (session == null) throw new AppError('NOT_FOUND');
-  // URL 의 id 를 신뢰하지 않는다. 내부 user_id 로 소유권을 판정한다 (공통 04 §2).
-  if (session.userId !== userId) throw new AppError('NOT_FOUND');
+      const [session] = await tx
+        .select()
+        .from(studySessions)
+        .where(eq(studySessions.id, sessionId))
+        .limit(1);
 
-  const studyDate = assertStudyDate(session.studyDate);
-  if (!canCompleteSessionAt(studyDate, now)) {
-    throw new AppError('STATE_CONFLICT', {
-      userMessage: '이 세션은 마감됐어요. 오늘 문제를 새로 시작해주세요.',
-    });
-  }
+      if (session == null || session.userId !== userId) throw new AppError('NOT_FOUND');
 
-  const [item] = await db
-    .select({
-      revisionId: questionRevisions.id,
-      canonicalQuestionId: studySessionItems.canonicalQuestionId,
-      era: questionRevisions.era,
-      topic: questionRevisions.topic,
-      correctIndex: questionRevisions.correctIndex,
-      explanation: questionRevisions.explanation,
-      wrongAnswerNotes: questionRevisions.wrongAnswerNotes,
-      memoryKeyword: questionRevisions.memoryKeyword,
-      status: questionRevisions.status,
-    })
-    .from(studySessionItems)
-    .innerJoin(questionRevisions, eq(questionRevisions.id, studySessionItems.questionRevisionId))
-    .where(
-      and(
-        eq(studySessionItems.sessionId, sessionId),
-        eq(studySessionItems.questionRevisionId, questionRevisionId),
-      ),
-    )
-    .limit(1);
-
-  // 내 세션에 배정되지 않은 문항에는 답할 수 없다.
-  if (item == null) throw new AppError('NOT_FOUND');
-
-  const [existing] = await db
-    .select({ selectedIndex: answers.selectedIndex, isCorrect: answers.isCorrect })
-    .from(answers)
-    .where(
-      and(eq(answers.sessionId, sessionId), eq(answers.questionRevisionId, questionRevisionId)),
-    )
-    .limit(1);
-
-  let isCorrect: boolean;
-  let replayed = false;
-
-  if (existing != null) {
-    if (existing.selectedIndex !== selectedIndex) {
-      // 08 §1: 제출 후 수정 금지.
-      throw new AppError('ANSWER_ALREADY_SUBMITTED');
-    }
-    isCorrect = existing.isCorrect;
-    replayed = true;
-  } else {
-    // 정답 판정은 서버가 한다. 클라이언트가 보낸 정답 여부를 받지 않는다.
-    isCorrect = selectedIndex === item.correctIndex;
-
-    try {
-      // 답안 기록과 복습 상태 갱신은 같은 트랜잭션에서 이뤄져야 한다.
-      // 답은 저장됐는데 복습 큐가 갱신되지 않으면 다음 날 복습 후보가 생기지 않는다.
-      await db.transaction(async (tx) => {
-        await tx.insert(answers).values({
-          sessionId,
-          questionRevisionId,
-          selectedIndex,
-          isCorrect,
+      const studyDate = assertStudyDate(session.studyDate);
+      if (!canCompleteSessionAt(studyDate, now)) {
+        throw new AppError('STATE_CONFLICT', {
+          userMessage: '이 세션은 마감됐어요. 오늘 문제를 새로 시작해주세요.',
         });
+      }
 
+      // 발행 경로는 canonical question 을 먼저 잠근다. 복습 상태 INSERT 의 FK 잠금도
+      // revision 잠금보다 먼저 잡아 발행(canonical → revision)과의 역순 대기를 피한다.
+      const [assigned] = await tx
+        .select({ canonicalQuestionId: studySessionItems.canonicalQuestionId })
+        .from(studySessionItems)
+        .innerJoin(questions, eq(questions.id, studySessionItems.canonicalQuestionId))
+        .where(
+          and(
+            eq(studySessionItems.sessionId, sessionId),
+            eq(studySessionItems.questionRevisionId, questionRevisionId),
+          ),
+        )
+        .for('key share', { of: questions });
+      if (assigned == null) throw new AppError('NOT_FOUND');
+
+      const [item] = await tx
+        .select({
+          era: questionRevisions.era,
+          topic: questionRevisions.topic,
+          correctIndex: questionRevisions.correctIndex,
+          explanation: questionRevisions.explanation,
+          wrongAnswerNotes: questionRevisions.wrongAnswerNotes,
+          memoryKeyword: questionRevisions.memoryKeyword,
+          status: questionRevisions.status,
+        })
+        .from(questionRevisions)
+        .where(eq(questionRevisions.id, questionRevisionId))
+        .for('share');
+      if (item == null) throw new AppError('NOT_FOUND');
+
+      const [existing] = await tx
+        .select({ selectedIndex: answers.selectedIndex, isCorrect: answers.isCorrect })
+        .from(answers)
+        .where(
+          and(eq(answers.sessionId, sessionId), eq(answers.questionRevisionId, questionRevisionId)),
+        )
+        .limit(1);
+
+      if (existing != null) {
+        if (existing.selectedIndex !== selectedIndex)
+          throw new AppError('ANSWER_ALREADY_SUBMITTED');
+        return { item, isCorrect: existing.isCorrect, replayed: true };
+      }
+
+      const isCorrect = selectedIndex === item.correctIndex;
+      await tx.insert(answers).values({
+        sessionId,
+        questionRevisionId,
+        selectedIndex,
+        isCorrect,
+      });
+
+      // void 답안은 감사용으로만 보존하고 복습·숙련도에는 더하지 않는다 (09 §2).
+      // SHARE 잠금은 판정부터 커밋까지 void 와 직렬화한다. 뒤따르는 void 는 job 으로 제외한다.
+      if (item.status !== 'voided') {
         await applyReviewState(tx, {
           userId,
-          canonicalQuestionId: item.canonicalQuestionId,
+          canonicalQuestionId: assigned.canonicalQuestionId,
           isCorrect,
           studyDate,
           answeredAt: now,
@@ -370,23 +378,11 @@ export async function submitAnswer(
           isCorrect,
           answeredAt: now,
         });
-      });
-    } catch (error) {
-      // 동시에 같은 답이 두 번 들어온 경우. 기존 판정을 그대로 쓴다.
-      const [raced] = await db
-        .select({ selectedIndex: answers.selectedIndex, isCorrect: answers.isCorrect })
-        .from(answers)
-        .where(
-          and(eq(answers.sessionId, sessionId), eq(answers.questionRevisionId, questionRevisionId)),
-        )
-        .limit(1);
+      }
 
-      if (raced == null) throw error;
-      if (raced.selectedIndex !== selectedIndex) throw new AppError('ANSWER_ALREADY_SUBMITTED');
-      isCorrect = raced.isCorrect;
-      replayed = true;
-    }
-  }
+      return { item, isCorrect, replayed: false };
+    }),
+  );
 
   const progress = await countProgress(sessionId);
 
