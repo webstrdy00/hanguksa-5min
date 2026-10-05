@@ -1,0 +1,136 @@
+{
+  "issue": 14,
+  "recordedDateKst": "2026-10-05",
+  "branch": "fix/study-issues-20261005",
+  "reviewedCodeCommit": "2652154",
+  "reviewScope": "Metric definitions and verification criteria; not release approval",
+  "releaseReady": false,
+  "decisions": {
+    "dailyStudy": {
+      "status": "approved",
+      "event": "complete_daily_study",
+      "meaning": "Server-confirmed completion, including zero valid questions",
+      "effectiveLearningFilter": "valid_count > 0",
+      "streak": "Preserved when questions are voided"
+    },
+    "review": {
+      "status": "approved",
+      "event": "complete_review",
+      "meaning": "Wrong-note review marker saved; not a correct re-answer",
+      "newReanswerFeature": "Outside current scope"
+    },
+    "notification": {
+      "status": "deferred",
+      "event": "complete_notification_agreed",
+      "currentMeaning": "Non-rejected agreement state saved, including pre-existing agreement",
+      "restriction": "Do not interpret as newly acquired consent or enable sending",
+      "resumeCondition": "Operator resumes notifications and approves purpose-specific eligibility and consent policy"
+    },
+    "delivery": {
+      "status": "approved_bounded_scope",
+      "guarantee": "Document-local observation-triggered retries and deduplication",
+      "limits": "SDK resolution is not remote receipt. Restart, eviction, or rejection after receipt can cause duplicate or missing platform events.",
+      "persistentIdentityStorage": false
+    }
+  },
+  "codeEvidence": {
+    "issue11": "5d59737: serialize answer writes and mastery replacement",
+    "issue13": "79b48fd: prevent stale submissions while reconciling conflicts",
+    "issue12": "3cb47ce: recover completion signals within document lifetime",
+    "issue9": "6babb0d: completion serialization, deletion ownership, result UI and void guards",
+    "metricContract": "frontend/src/analytics/events.ts",
+    "deliveryTests": "frontend/src/analytics/completion.test.ts",
+    "resultTests": "frontend/src/screens/ResultScreen.test.tsx",
+    "concurrencyTests": [
+      "backend/src/services/mastery-concurrency.db.test.ts",
+      "backend/src/services/completion-concurrency.db.test.ts"
+    ]
+  },
+  "verification": [
+    {
+      "scope": "Exact staged snapshot excluding unrelated user changes, preceding documentation-only commit 2652154",
+      "status": "passed",
+      "frontendTests": 123,
+      "backendUnitTests": 263,
+      "checks": ["typecheck", "lint", "frontend production build"],
+      "limitation": "No native device or real SDK transport"
+    },
+    {
+      "scope": "Disposable PostgreSQL 17 main database",
+      "status": "passed",
+      "tests": 278,
+      "limitation": "Independent journal disabled for deterministic main-DB blocking tests; not an end-to-end production journal verification"
+    },
+    {
+      "scope": "Dependency audit after Fastify 5.12.5 and ip-address patch updates",
+      "status": "passed",
+      "result": "No known vulnerabilities reported at verification time"
+    }
+  ],
+  "deploymentBoundary": {
+    "branchMerged": false,
+    "branchDeployed": false,
+    "lastObservedBackend": {
+      "commit": "413118c",
+      "observedDateKst": "2026-10-02",
+      "freshness": "Historical observation, not revalidated in this record"
+    },
+    "lastObservedFrontend": {
+      "publicVersion": "20260921-6",
+      "reviewVersion": "20261002-8",
+      "reviewBuildCommit": "413118c",
+      "observedDateKst": "2026-10-02",
+      "freshness": "Historical observation, not revalidated in this record"
+    },
+    "restriction": "Neither historical artifact contains the issue-fix branch. Prior QR evidence cannot validate these new fixes. Do not infer that reproduced defects occurred in production."
+  },
+  "remainingGates": [
+    {
+      "gate": "Integrated supported Toss iOS and Android flow",
+      "status": "blocked",
+      "owner": "Operator for device execution; coding agent for test build and evidence correlation",
+      "reason": "No adb device attached at current inspection; issue branch not integrated or uploaded",
+      "trigger": "After explicit integration approval and a QR build tied to its commit, before public release; calendar date not yet assigned",
+      "cases": [
+        "onboarding",
+        "five answers",
+        "results",
+        "wrong notes",
+        "back navigation",
+        "background and restart",
+        "409/422",
+        "lost completion response",
+        "network recovery",
+        "rapid taps",
+        "KST midnight and grace boundary"
+      ],
+      "evidence": [
+        "device and OS",
+        "Toss version",
+        "bundle and backend commit",
+        "network condition",
+        "timestamp with timezone",
+        "pass/fail/not-run per case"
+      ]
+    },
+    {
+      "gate": "Actual performance",
+      "status": "not_run",
+      "owner": "Operator and coding agent with device access",
+      "trigger": "Same integrated QR build, before release",
+      "criteria": "Internal start target <=2s; distinguish first screen from first usable answer control",
+      "cases": ["cold/warm", "first/return visit", "network conditions"],
+      "limitation": "Separate server wakeup, authentication, API and rendering delays. Navigation-to-question includes onboarding and user dwell; not native launch latency. Do not manufacture cold-start evidence by disrupting production."
+    },
+    {
+      "gate": "Live event receipt and console aggregation",
+      "status": "not_run_for_issue_branch",
+      "owner": "Operator and coding agent with authorized console session",
+      "trigger": "Authorized live validation after integrated-device checks; inspect aggregation next day or after documented platform delay",
+      "criteria": "Separate SDK call, Promise outcome, platform receipt and console count; match period/timezone and tooltip date before diagnosing loss",
+      "events": ["complete_daily_study", "complete_review"],
+      "notification": "Deferred with notification feature; do not enable solely for this test",
+      "privacy": "No account metrics, identities, raw answers, credentials or sensitive screenshots in public issues"
+    }
+  ]
+}
