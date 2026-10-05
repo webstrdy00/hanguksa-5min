@@ -77,7 +77,7 @@ async function assertSingleSubmission(slot: number): Promise<void> {
   expect(state).toEqual({ correct_count: 1, wrong_count: 0 });
 }
 
-async function assertCompleted(jobId: string): Promise<void> {
+async function assertCompleted(jobId: string, processedUsers = 1): Promise<void> {
   const [job] = await sql<
     { status: string; processed_users: number; total_users: number; last_error: string | null }[]
   >`
@@ -86,8 +86,8 @@ async function assertCompleted(jobId: string): Promise<void> {
   `;
   expect(job).toEqual({
     status: 'completed',
-    processed_users: 1,
-    total_users: 1,
+    processed_users: processedUsers,
+    total_users: processedUsers,
     last_error: null,
   });
   expect(await runNextMasteryRecalcJob(NOW)).toBeNull();
@@ -320,37 +320,86 @@ describe('issue11: mastery replacement and incremental writes serialize per user
 });
 
 describe('issue11: void and deletion boundaries', () => {
-  it('void first: audit/replay survives but no review or mastery increment is added', async () => {
+  it('void first: new answers are rejected without audit, review, or mastery rows', async () => {
     const jobId = await voidRevision(pool[0]!.revisionId);
-    const answer = await submitAnswer(userId, sessionId, pool[0]!.revisionId, 0, NOW);
-    expect(answer.replayed).toBe(false);
-    expect(answer.answeredCount).toBe(0);
-    expect(answer.validCount).toBe(4);
+    await expect(
+      submitAnswer(userId, sessionId, pool[0]!.revisionId, 0, NOW),
+    ).rejects.toMatchObject({
+      code: 'STATE_CONFLICT',
+      status: 409,
+      retryable: false,
+      details: { revisionStatus: 'voided' },
+    });
     const [audit] = await sql<{ count: number }[]>`
       select count(*)::integer as count from answers where session_id = ${sessionId}
     `;
-    expect(audit?.count).toBe(1);
+    expect(audit?.count).toBe(0);
     const states = await sql`select * from user_question_state where user_id = ${userId}`;
     expect(states).toHaveLength(0);
+    const mastery = await sql`select * from mastery where user_id = ${userId}`;
+    expect(mastery).toHaveLength(0);
     await assertConsistent(0);
     expect(await runNextMasteryRecalcJob(NOW)).toEqual({
       jobId,
       status: 'completed',
-      processedUsers: 1,
+      processedUsers: 0,
     });
-    expect((await submitAnswer(userId, sessionId, pool[0]!.revisionId, 0, NOW)).replayed).toBe(
-      true,
-    );
-    await expect(
-      submitAnswer(userId, sessionId, pool[0]!.revisionId, 1, NOW),
-    ).rejects.toMatchObject({
-      code: 'ANSWER_ALREADY_SUBMITTED',
-    });
+    for (const selectedIndex of [0, 1]) {
+      await expect(
+        submitAnswer(userId, sessionId, pool[0]!.revisionId, selectedIndex, NOW),
+      ).rejects.toMatchObject({
+        code: 'STATE_CONFLICT',
+        status: 409,
+        details: { revisionStatus: 'voided' },
+      });
+    }
+    const [counts] = await sql<{ answers: number; states: number; mastery: number }[]>`
+      select
+        (select count(*)::integer from answers where session_id = ${sessionId}) as answers,
+        (select count(*)::integer from user_question_state where user_id = ${userId}) as states,
+        (select count(*)::integer from mastery where user_id = ${userId}) as mastery
+    `;
+    expect(counts).toEqual({ answers: 0, states: 0, mastery: 0 });
     await assertConsistent(0);
-    await assertCompleted(jobId);
+    await assertCompleted(jobId, 0);
   });
 
-  it('answer first: concurrent void waits for revision lock and its job removes the increment', async () => {
+  it('void first: an answer waiting for the revision lock rechecks status before INSERT', async () => {
+    const revisionId = pool[0]!.revisionId;
+    const gate = await holdLock(
+      async (tx) =>
+        await tx`
+          update question_revisions set status = 'voided', status_reason = 'issue9 regression'
+          where id = ${revisionId}
+        `,
+    );
+    const pending: Promise<unknown>[] = [];
+    try {
+      const answer = track(pending, submitAnswer(userId, sessionId, revisionId, 0, NOW));
+      await blockedBy(gate.pid, 'for share');
+      gate.release();
+      await gate.done;
+      await expect(answer).rejects.toMatchObject({
+        code: 'STATE_CONFLICT',
+        status: 409,
+        details: { revisionStatus: 'voided' },
+      });
+      const [counts] = await sql<{ answers: number; states: number; mastery: number }[]>`
+        select
+          (select count(*)::integer from answers where session_id = ${sessionId}) as answers,
+          (select count(*)::integer from user_question_state where user_id = ${userId}) as states,
+          (select count(*)::integer from mastery where user_id = ${userId}) as mastery
+      `;
+      expect(counts).toEqual({ answers: 0, states: 0, mastery: 0 });
+      await assertConsistent(0);
+    } finally {
+      gate.release();
+      await gate.done;
+      await Promise.allSettled(pending);
+    }
+  });
+
+  it('answer first: concurrent void preserves immutable audit/replay and excludes the increment', async () => {
     await installBarrier('answers');
     const gate = await holdLock();
     const pending: Promise<unknown>[] = [];
@@ -363,6 +412,11 @@ describe('issue11: void and deletion boundaries', () => {
       await gate.done;
       expect((await answer).replayed).toBe(false);
       const jobId = await voided;
+      await assertSingleSubmission(0);
+      const auditBefore = await sql<{ dump: string }[]>`
+        select row_to_json(answers)::text as dump from answers where session_id = ${sessionId}
+      `;
+      expect(auditBefore).toHaveLength(1);
       expect(await runNextMasteryRecalcJob(NOW)).toEqual({
         jobId,
         status: 'completed',
@@ -370,10 +424,21 @@ describe('issue11: void and deletion boundaries', () => {
       });
       await assertConsistent(0);
       await assertCompleted(jobId);
-      const [audit] = await sql<{ count: number }[]>`
-        select count(*)::integer as count from answers where session_id = ${sessionId}
+      expect(await submitAnswer(userId, sessionId, pool[0]!.revisionId, 0, NOW)).toMatchObject({
+        replayed: true,
+        isCorrect: true,
+        answeredCount: 0,
+        validCount: 4,
+      });
+      await expect(
+        submitAnswer(userId, sessionId, pool[0]!.revisionId, 1, NOW),
+      ).rejects.toMatchObject({ code: 'ANSWER_ALREADY_SUBMITTED', status: 422 });
+      const auditAfter = await sql<{ dump: string }[]>`
+        select row_to_json(answers)::text as dump from answers where session_id = ${sessionId}
       `;
-      expect(audit?.count).toBe(1);
+      expect(auditAfter.map((row) => row.dump)).toEqual(auditBefore.map((row) => row.dump));
+      await assertSingleSubmission(0);
+      await assertConsistent(0);
     } finally {
       gate.release();
       await gate.done;

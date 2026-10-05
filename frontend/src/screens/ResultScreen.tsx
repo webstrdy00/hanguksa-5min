@@ -9,6 +9,7 @@ import {
   ActionButton,
   AsyncBoundary,
   BottomCta,
+  EmptyState,
   ErrorState,
   LoadingState,
   Screen,
@@ -22,7 +23,7 @@ import {
  * "합격 가능성 83%" 같은 근거 없는 숫자를 쓰지 않는다 (02 UX, 07 §3).
  * 대신 "오늘 4/5, 어느 시대 복습 필요"처럼 행동 가능한 피드백만 준다.
  *
- * 완료 처리는 화면 진입 시 한 번만 호출한다. 재요청해도 서버가 같은 결과를 주지만
+ * 유효 문항에 모두 답했을 때만 완료를 요청한다. 재요청해도 서버가 같은 결과를 주지만
  * 클라이언트도 중복 호출을 만들지 않는다 (02 UX §5).
  */
 export function ResultScreen(): JSX.Element {
@@ -89,15 +90,29 @@ export function ResultScreen(): JSX.Element {
 
           const completed =
             complete.data?.session.id === data.session.id ? complete.data : undefined;
+          const isCompleted = completed != null || data.session.completedAt != null;
+          const remaining = data.items.filter((item) => !item.voided && !item.answered).length;
           const score = completed?.session.score ?? data.session.score;
-          const validCount = completed?.validCount ?? answered.length;
+          const validCount =
+            completed?.validCount ?? data.items.filter((item) => !item.voided).length;
           const streakDays = completed?.streak.days;
 
-          if (complete.isPending && score == null) {
-            return <LoadingState label="오늘 학습을 마무리하고 있어요" />;
+          if (!isCompleted && remaining > 0) {
+            return (
+              <>
+                <EmptyState
+                  title="아직 풀지 않은 문제가 있어요"
+                  description={`남은 ${remaining}문제를 풀면 오늘의 결과를 볼 수 있어요.`}
+                />
+                <div style={{ flex: 1 }} />
+                <BottomCta>
+                  <ActionButton onClick={() => void navigate('/study')}>이어서 풀기</ActionButton>
+                </BottomCta>
+              </>
+            );
           }
 
-          if (complete.isError && score == null) {
+          if (complete.isError && !isCompleted) {
             return (
               <ErrorState
                 error={complete.error}
@@ -113,6 +128,10 @@ export function ResultScreen(): JSX.Element {
             );
           }
 
+          if (!isCompleted || score == null) {
+            return <LoadingState label="오늘 학습을 마무리하고 있어요" />;
+          }
+
           const wrongEras = [...new Set(wrongItems.map((item) => item.era))];
 
           return (
@@ -121,9 +140,17 @@ export function ResultScreen(): JSX.Element {
                 <div style={{ paddingTop: 40, textAlign: 'center' }}>
                   <p style={{ color: '#6b7684', fontSize: 15, margin: '0 0 8px' }}>오늘의 결과</p>
                   <p style={{ fontSize: 40, fontWeight: 800, margin: 0, lineHeight: 1.1 }}>
-                    {score ?? 0}
+                    {score}
                     <span style={{ fontSize: 22, color: '#8b95a1' }}> / {validCount}</span>
                   </p>
+                  {validCount === 0 && (
+                    <>
+                      <p>오늘 학습을 마쳤어요.</p>
+                      <p style={{ marginTop: 12, color: '#6b7684', fontSize: 15 }}>
+                        모든 문항이 제외되어 채점 대상 문항이 없어요.
+                      </p>
+                    </>
+                  )}
                   {streakDays != null && (
                     <p style={{ marginTop: 12 }}>
                       <StatusTag tone="correct">연속 학습 {streakDays}일째</StatusTag>
@@ -151,30 +178,33 @@ export function ResultScreen(): JSX.Element {
                 </Section>
               )}
 
-              <Section>
-                <div
-                  style={{
-                    marginTop: 24,
-                    padding: 18,
-                    borderRadius: 14,
-                    background: '#f9fafb',
-                  }}
-                >
-                  <h2 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 10px' }}>
-                    내일은 이렇게 준비해요
-                  </h2>
-                  {wrongEras.length === 0 ? (
-                    <p style={{ margin: 0, fontSize: 15, color: '#4e5968' }}>
-                      오늘은 모두 맞혔어요. 내일은 새로운 문제로 이어갈게요.
-                    </p>
-                  ) : (
-                    <p style={{ margin: 0, fontSize: 15, color: '#4e5968', lineHeight: 1.6 }}>
-                      {wrongEras.map((era) => ERA_LABELS[era] ?? era).join(', ')} 문항{' '}
-                      {wrongItems.length}개를 틀렸어요. 오답은 복습 일정에 따라 일부씩 다시 나와요.
-                    </p>
-                  )}
-                </div>
-              </Section>
+              {validCount > 0 && (
+                <Section>
+                  <div
+                    style={{
+                      marginTop: 24,
+                      padding: 18,
+                      borderRadius: 14,
+                      background: '#f9fafb',
+                    }}
+                  >
+                    <h2 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 10px' }}>
+                      내일은 이렇게 준비해요
+                    </h2>
+                    {wrongEras.length === 0 ? (
+                      <p style={{ margin: 0, fontSize: 15, color: '#4e5968' }}>
+                        오늘은 모두 맞혔어요. 내일은 새로운 문제로 이어갈게요.
+                      </p>
+                    ) : (
+                      <p style={{ margin: 0, fontSize: 15, color: '#4e5968', lineHeight: 1.6 }}>
+                        {wrongEras.map((era) => ERA_LABELS[era] ?? era).join(', ')} 문항{' '}
+                        {wrongItems.length}개를 틀렸어요. 오답은 복습 일정에 따라 일부씩 다시
+                        나와요.
+                      </p>
+                    )}
+                  </div>
+                </Section>
+              )}
 
               <div style={{ flex: 1 }} />
               <BottomCta>

@@ -352,6 +352,15 @@ export async function submitAnswer(
         return { item, isCorrect: existing.isCorrect, replayed: true };
       }
 
+      // 이미 제출한 답안의 재생은 유지하지만, void 뒤에는 새 답안을 만들지 않는다.
+      // 같은 SHARE 잠금 안에서 검사하므로 뒤따르는 void 는 기존 답안만 감사용으로 보존한다.
+      if (item.status === 'voided') {
+        throw new AppError('STATE_CONFLICT', {
+          userMessage: '이 문제는 학습에서 제외됐어요. 새로고침 후 이어서 풀어주세요.',
+          details: { revisionStatus: 'voided' },
+        });
+      }
+
       const isCorrect = selectedIndex === item.correctIndex;
       await tx.insert(answers).values({
         sessionId,
@@ -360,25 +369,22 @@ export async function submitAnswer(
         isCorrect,
       });
 
-      // void 답안은 감사용으로만 보존하고 복습·숙련도에는 더하지 않는다 (09 §2).
       // SHARE 잠금은 판정부터 커밋까지 void 와 직렬화한다. 뒤따르는 void 는 job 으로 제외한다.
-      if (item.status !== 'voided') {
-        await applyReviewState(tx, {
-          userId,
-          canonicalQuestionId: assigned.canonicalQuestionId,
-          isCorrect,
-          studyDate,
-          answeredAt: now,
-        });
+      await applyReviewState(tx, {
+        userId,
+        canonicalQuestionId: assigned.canonicalQuestionId,
+        isCorrect,
+        studyDate,
+        answeredAt: now,
+      });
 
-        await applyMastery(tx, {
-          userId,
-          era: item.era,
-          topic: item.topic,
-          isCorrect,
-          answeredAt: now,
-        });
-      }
+      await applyMastery(tx, {
+        userId,
+        era: item.era,
+        topic: item.topic,
+        isCorrect,
+        answeredAt: now,
+      });
 
       return { item, isCorrect, replayed: false };
     }),
@@ -503,8 +509,11 @@ interface SessionProgress {
   correctValid: number;
 }
 
-async function countProgress(sessionId: string): Promise<SessionProgress> {
-  const rows = await db
+async function countProgress(
+  sessionId: string,
+  executor: Parameters<Parameters<typeof db.transaction>[0]>[0] | typeof db = db,
+): Promise<SessionProgress> {
+  const rows = await executor
     .select({
       status: questionRevisions.status,
       selectedIndex: answers.selectedIndex,
@@ -548,91 +557,101 @@ export async function completeSession(
   sessionId: string,
   now: Date,
 ): Promise<CompleteResult> {
-  const [session] = await db
-    .select()
-    .from(studySessions)
-    .where(eq(studySessions.id, sessionId))
-    .limit(1);
+  // 답안과 같은 외부 원장 → 사용자 순서다. 세션/진행/streak 는 사용자 잠금 뒤에 읽는다.
+  // 같은 세션의 연타와 유예창의 전날/오늘 완료가 오래된 상태를 덮어쓰지 못한다.
+  return await withLiveJournalSubject(userId, async () =>
+    db.transaction(async (tx) => {
+      const [profile] = await tx
+        .select({
+          identityStatus: users.identityStatus,
+          streakDays: users.streakDays,
+          lastStreakDate: users.lastStreakDate,
+        })
+        .from(users)
+        .where(eq(users.id, userId))
+        .for('update');
+      if (profile == null || profile.identityStatus === 'deleted') {
+        throw new AppError('USER_DELETED');
+      }
+      if (profile.identityStatus !== 'active') throw new AppError('FORBIDDEN');
 
-  if (session == null) throw new AppError('NOT_FOUND');
-  if (session.userId !== userId) throw new AppError('NOT_FOUND');
+      const [session] = await tx
+        .select()
+        .from(studySessions)
+        .where(and(eq(studySessions.id, sessionId), eq(studySessions.userId, userId)))
+        .limit(1);
+      if (session == null) throw new AppError('NOT_FOUND');
 
-  const studyDate = assertStudyDate(session.studyDate);
+      const studyDate = assertStudyDate(session.studyDate);
 
-  const [profile] = await db
-    .select({ streakDays: users.streakDays, lastStreakDate: users.lastStreakDate })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
+      if (session.completedAt != null) {
+        // 재요청은 오류가 아니다. 같은 결과를 그대로 돌려준다.
+        return {
+          session: {
+            id: session.id,
+            studyDate,
+            score: session.score ?? 0,
+            completedAt: session.completedAt.toISOString(),
+          },
+          streak: {
+            days: profile.streakDays,
+            lastStreakDate: assertStudyDate(profile.lastStreakDate ?? studyDate),
+          },
+          validCount: (await countProgress(sessionId, tx)).valid,
+          alreadyCompleted: true,
+        };
+      }
 
-  if (session.completedAt != null) {
-    // 재요청은 오류가 아니다. 같은 결과를 그대로 돌려준다.
-    return {
-      session: {
-        id: session.id,
+      if (!canCompleteSessionAt(studyDate, now)) {
+        throw new AppError('STATE_CONFLICT', {
+          userMessage: '이 세션은 마감됐어요. 오늘 문제를 새로 시작해주세요.',
+        });
+      }
+
+      const progress = await countProgress(sessionId, tx);
+
+      if (progress.answeredValid < progress.valid) {
+        throw new AppError('STATE_CONFLICT', {
+          userMessage: '아직 풀지 않은 문제가 있어요.',
+          details: { answered: progress.answeredValid, required: progress.valid },
+        });
+      }
+
+      const completedAt = new Date();
+      const streak = nextStreak(
+        {
+          streakDays: profile.streakDays,
+          lastStreakDate:
+            profile.lastStreakDate == null ? null : assertStudyDate(profile.lastStreakDate),
+        },
         studyDate,
-        score: session.score ?? 0,
-        completedAt: session.completedAt.toISOString(),
-      },
-      streak: {
-        days: profile?.streakDays ?? 0,
-        lastStreakDate: assertStudyDate(profile?.lastStreakDate ?? studyDate),
-      },
-      validCount: (await countProgress(sessionId)).valid,
-      alreadyCompleted: true,
-    };
-  }
+      );
 
-  if (!canCompleteSessionAt(studyDate, now)) {
-    throw new AppError('STATE_CONFLICT', {
-      userMessage: '이 세션은 마감됐어요. 오늘 문제를 새로 시작해주세요.',
-    });
-  }
+      await tx
+        .update(studySessions)
+        .set({ score: progress.correctValid, completedAt })
+        .where(eq(studySessions.id, sessionId));
 
-  const progress = await countProgress(sessionId);
+      await tx
+        .update(users)
+        .set({
+          streakDays: streak.streakDays,
+          ...(streak.lastStreakDate == null ? {} : { lastStreakDate: streak.lastStreakDate }),
+          lastSeenAt: completedAt,
+        })
+        .where(eq(users.id, userId));
 
-  if (progress.answeredValid < progress.valid) {
-    throw new AppError('STATE_CONFLICT', {
-      userMessage: '아직 풀지 않은 문제가 있어요.',
-      details: { answered: progress.answeredValid, required: progress.valid },
-    });
-  }
-
-  const completedAt = new Date();
-  const streak = nextStreak(
-    {
-      streakDays: profile?.streakDays ?? 0,
-      lastStreakDate:
-        profile?.lastStreakDate == null ? null : assertStudyDate(profile.lastStreakDate),
-    },
-    studyDate,
+      return {
+        session: {
+          id: session.id,
+          studyDate,
+          score: progress.correctValid,
+          completedAt: completedAt.toISOString(),
+        },
+        streak: { days: streak.streakDays, lastStreakDate: streak.lastStreakDate ?? studyDate },
+        validCount: progress.valid,
+        alreadyCompleted: false,
+      };
+    }),
   );
-
-  await db.transaction(async (tx) => {
-    await tx
-      .update(studySessions)
-      .set({ score: progress.correctValid, completedAt })
-      .where(eq(studySessions.id, sessionId));
-
-    await tx
-      .update(users)
-      .set({
-        streakDays: streak.streakDays,
-        ...(streak.lastStreakDate == null ? {} : { lastStreakDate: streak.lastStreakDate }),
-        lastSeenAt: completedAt,
-      })
-      .where(eq(users.id, userId));
-  });
-
-  return {
-    session: {
-      id: session.id,
-      studyDate,
-      score: progress.correctValid,
-      completedAt: completedAt.toISOString(),
-    },
-    streak: { days: streak.streakDays, lastStreakDate: streak.lastStreakDate ?? studyDate },
-    validCount: progress.valid,
-    alreadyCompleted: false,
-  };
 }

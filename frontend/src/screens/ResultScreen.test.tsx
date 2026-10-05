@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { queryKeys } from '../api/hooks.ts';
 import type { CompleteResponse, SessionResponse } from '../api/types.ts';
@@ -59,8 +59,11 @@ function renderScreen(client = new QueryClient({ defaultOptions: { queries: { re
   const view = render(
     <StrictMode>
       <QueryClientProvider client={client}>
-        <MemoryRouter>
-          <ResultScreen />
+        <MemoryRouter initialEntries={['/result']}>
+          <Routes>
+            <Route path="/result" element={<ResultScreen />} />
+            <Route path="/study" element={<p>MOCK 이어서 학습</p>} />
+          </Routes>
         </MemoryRouter>
       </QueryClientProvider>
     </StrictMode>,
@@ -336,19 +339,31 @@ it('다른 계정 세션으로 교체된 QueryClient에는 늦은 완료 응답�
   expect(requests).toBe(1);
 });
 
-it('미답 유효 문항이 있으면 완료 요청과 전환 모두 보내지 않는다', async () => {
-  const state = makeSession();
-  state.items[4]!.answered = false;
-  const calls: string[] = [];
-  vi.stubGlobal('fetch', (input: string) => {
-    calls.push(String(input));
-    return Promise.resolve(Response.json(state));
-  });
-  renderScreen();
-  await screen.findByText('오늘의 결과');
-  expect(calls.filter((url) => url.includes('/complete'))).toHaveLength(0);
-  expect(analytics.log).not.toHaveBeenCalled();
-});
+it.each([0, 3])(
+  '유효 문항 %i개에 답한 미완료 결과에서는 완료 대신 이어서 풀기를 제공한다',
+  async (answeredCount) => {
+    const state = makeSession();
+    state.items = state.items.map((item, index) => ({
+      ...item,
+      voided: index === 0,
+      answered: index > 0 && index <= answeredCount,
+    }));
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', (input: string) => {
+      calls.push(String(input));
+      return Promise.resolve(Response.json(state));
+    });
+    renderScreen();
+    await screen.findByText(`남은 ${4 - answeredCount}문제를 풀면 오늘의 결과를 볼 수 있어요.`);
+    expect(screen.queryByText('오늘의 결과')).toBeNull();
+    expect(screen.queryByText('0')).toBeNull();
+    expect(screen.queryByText(/학습을 마쳤어요|모두 맞혔어요|학습 완료와 연속 학습일/)).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: '이어서 풀기' }));
+    await screen.findByText('MOCK 이어서 학습');
+    expect(calls.filter((url) => url.includes('/complete'))).toHaveLength(0);
+    expect(analytics.log).not.toHaveBeenCalled();
+  },
+);
 
 it('무효 미답 문항은 완료를 막지 않고 유효 문항 수만 전송한다', async () => {
   const state = makeSession();
@@ -369,3 +384,71 @@ it('무효 미답 문항은 완료를 막지 않고 유효 문항 수만 전송�
     }),
   );
 });
+
+it.each([null, 0])(
+  '완료 응답을 기다리는 동안 기존 점수 %s로 결과나 완료를 표시하지 않는다',
+  async (score) => {
+    const state = makeSession();
+    state.session.score = score;
+    let deliver!: (response: Response) => void;
+    const completeRequest = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          deliver = resolve;
+        }),
+    );
+    vi.stubGlobal('fetch', (input: string) => {
+      if (!String(input).includes('/complete')) return Promise.resolve(Response.json(state));
+      return completeRequest();
+    });
+    renderScreen();
+    await waitFor(() => expect(completeRequest).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('status').textContent).toBe('오늘 학습을 마무리하고 있어요');
+    expect(screen.queryByText('오늘의 결과')).toBeNull();
+    expect(screen.queryByText('0')).toBeNull();
+    expect(screen.queryByText(/학습을 마쳤어요|모두 맞혔어요|학습 완료와 연속 학습일/)).toBeNull();
+    expect(analytics.log).not.toHaveBeenCalled();
+
+    await act(async () => {
+      state.session = makeSession(true).session;
+      deliver(Response.json(makeComplete()));
+    });
+    await screen.findByText('연속 학습 3일째');
+    expect(screen.getByText('4')).toBeTruthy();
+    await waitFor(() => expect(analytics.log).toHaveBeenCalledTimes(1));
+  },
+);
+
+it.each([false, true])(
+  '모든 문항이 무효인 완료도 채점 대상이 없음을 안내하고 0개 전환을 유지한다 (기존 완료: %s)',
+  async (alreadyCompleted) => {
+    const state = makeSession(alreadyCompleted);
+    state.session.score = alreadyCompleted ? 0 : null;
+    state.items = state.items.map((item) => ({ ...item, voided: true, answered: false }));
+    const response = makeComplete();
+    response.session.score = 0;
+    response.validCount = 0;
+    let requests = 0;
+    vi.stubGlobal('fetch', (input: string) => {
+      if (!String(input).includes('/complete')) return Promise.resolve(Response.json(state));
+      requests++;
+      state.session = { ...state.session, ...response.session };
+      return Promise.resolve(Response.json(response));
+    });
+    renderScreen();
+    await screen.findByText('모든 문항이 제외되어 채점 대상 문항이 없어요.');
+    expect(screen.getByText('/ 0')).toBeTruthy();
+    expect(screen.queryByText(/모두 맞혔어요/)).toBeNull();
+    expect(screen.queryByRole('button', { name: '이어서 풀기' })).toBeNull();
+    expect(requests).toBe(alreadyCompleted ? 0 : 1);
+    await waitFor(() =>
+      expect(analytics.log).toHaveBeenCalledExactlyOnceWith({
+        log_name: 'complete_daily_study',
+        log_type: 'event',
+        params: alreadyCompleted
+          ? { score: '0', valid_count: '0' }
+          : { score: '0', valid_count: '0', streak_days: '3' },
+      }),
+    );
+  },
+);
