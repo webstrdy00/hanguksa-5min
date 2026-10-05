@@ -15,6 +15,15 @@ import { Analytics } from '@apps-in-toss/web-framework';
  *   보조 전환 = complete_review, complete_notification_agreed
  *   운영     = question_report, voided_question_seen, schedule_changed
  *
+ * 해석 경계 (#14, 2026-10-05 사용자 결정):
+ *   - complete_daily_study는 서버 완료를 뜻하며 전 문항 무효인 날도 포함한다.
+ *     유효 학습은 valid_count > 0으로 구분하고 합격 가능성으로 해석하지 않는다.
+ *   - complete_review는 오답노트 복습 표시 저장이지 재풀이 정답 판정이 아니다.
+ *   - 알림 전환은 현재 저장 경로의 성공 신호이며 신규 동의 획득만을 뜻하지 않는다.
+ *     신규/기존 동의 구분과 발송 검증은 알림 보류 해제 전에 확정해야 한다.
+ *   - SDK 호출·Promise 성공·플랫폼 수신·콘솔 집계는 서로 다른 증거다.
+ *     문서 내 복구/중복 방어는 프로세스 재시작 후 전달을 보장하지 않는다.
+ *
  * ⚠️ 절대 넣지 않는 값 (07 §7, 공통 04 §4, 하드게이트 P0):
  *   - 문항 원문 / 선택지 / 사용자가 고른 답
  *   - anonKey 원문, 내부 access token
