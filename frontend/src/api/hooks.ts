@@ -120,6 +120,13 @@ export function useSubmitAnswer(
       });
       void client.invalidateQueries({ queryKey: queryKeys.session });
     },
+    onError: (error) => {
+      if (error instanceof ApiError && (error.status === 409 || error.status === 422)) {
+        // 화면이 재조회를 기다리는 동안 오류를 유지해 오래된 답안을 다시 보내지 않는다.
+        // 여기서는 stale 표시만 하고, 잠금 해제와 재조회는 화면에서 함께 처리한다.
+        void client.invalidateQueries({ queryKey: queryKeys.session, refetchType: 'none' });
+      }
+    },
     // 답안은 자동 재시도하지 않는다. 중복 제출로 보이지 않게 사용자가 결정한다.
     retry: false,
   });
