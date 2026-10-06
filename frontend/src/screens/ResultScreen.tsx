@@ -193,7 +193,10 @@ export function ResultScreen(): JSX.Element {
                     </h2>
                     {wrongEras.length === 0 ? (
                       <p style={{ margin: 0, fontSize: 15, color: '#4e5968' }}>
-                        오늘은 모두 맞혔어요. 내일은 새로운 문제로 이어갈게요.
+                        {voidedCount > 0
+                          ? '채점에 포함된 문항은 모두 맞혔어요.'
+                          : '오늘은 모두 맞혔어요.'}{' '}
+                        내일도 복습 일정과 학습 기록에 맞춰 5문제를 준비해요.
                       </p>
                     ) : (
                       <p style={{ margin: 0, fontSize: 15, color: '#4e5968', lineHeight: 1.6 }}>

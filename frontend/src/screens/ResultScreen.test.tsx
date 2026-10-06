@@ -151,6 +151,45 @@ it('오답이 복습 슬롯보다 많아도 모두 내일 출제된다고 약속
   expect(screen.queryByText(/내일 복습 문제로 다시 만나요/)).toBeNull();
 });
 
+it('모두 맞혀도 다음 날 신규 문항만 출제된다고 약속하지 않는다', async () => {
+  const state = makeSession(true);
+  state.session.score = 5;
+  state.items = state.items.map((item) => ({ ...item, selectedIndex: 0, isCorrect: true }));
+  vi.stubGlobal('fetch', () => Promise.resolve(Response.json(state)));
+  renderScreen();
+  await screen.findByText(/오늘은 모두 맞혔어요/);
+  expect(screen.getByText(/복습 일정과 학습 기록에 맞춰 5문제를 준비해요/)).toBeTruthy();
+  expect(screen.queryByText(/내일은 새로운 문제로/)).toBeNull();
+});
+
+it('일부 문항이 제외되면 유효 문항에 한해서만 모두 정답이라고 안내한다', async () => {
+  const state = makeSession(true);
+  state.session.score = 4;
+  state.items = state.items.map((item, index) => ({
+    ...item,
+    voided: index === 0,
+    selectedIndex: index === 0 ? 1 : 0,
+    isCorrect: index !== 0,
+  }));
+  vi.stubGlobal('fetch', () => Promise.resolve(Response.json(state)));
+  renderScreen();
+  await screen.findByText(/채점에 포함된 문항은 모두 맞혔어요/);
+  expect(screen.getByText('/ 4')).toBeTruthy();
+  expect(screen.queryByText(/오늘은 모두 맞혔어요/)).toBeNull();
+});
+
+it('모든 문항이 제외되면 학습 완료를 유지하되 모두 정답이라고 안내하지 않는다', async () => {
+  const state = makeSession(true);
+  state.session.score = 0;
+  state.items = state.items.map((item) => ({ ...item, voided: true }));
+  vi.stubGlobal('fetch', () => Promise.resolve(Response.json(state)));
+  renderScreen();
+  await screen.findByText(/오늘 학습을 마쳤어요/);
+  expect(screen.getByText('/ 0')).toBeTruthy();
+  expect(screen.getByText(/학습 완료와 연속 학습일은 그대로예요/)).toBeTruthy();
+  expect(screen.queryByText(/모두 맞혔어요/)).toBeNull();
+});
+
 it('완료 저장 실패를 표시하고 재시도하면 서버 결과로 회복한다', async () => {
   let requests = 0;
   const state = makeSession();
@@ -439,6 +478,7 @@ it.each([false, true])(
     await screen.findByText('모든 문항이 제외되어 채점 대상 문항이 없어요.');
     expect(screen.getByText('/ 0')).toBeTruthy();
     expect(screen.queryByText(/모두 맞혔어요/)).toBeNull();
+    expect(screen.queryByRole('heading', { name: '내일은 이렇게 준비해요' })).toBeNull();
     expect(screen.queryByRole('button', { name: '이어서 풀기' })).toBeNull();
     expect(requests).toBe(alreadyCompleted ? 0 : 1);
     await waitFor(() =>
