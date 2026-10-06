@@ -1,0 +1,416 @@
+[
+  {
+    "era": "prehistoric",
+    "topic": "politics",
+    "ability": "fact",
+    "difficulty": 3,
+    "prompt": "부여의 정치 조직에 대한 설명으로 옳은 것은?",
+    "choices": [
+      "골품제에 따라 관직 승진을 제한했다",
+      "마가·우가·저가·구가가 각각 사출도를 다스렸다",
+      "정사암에 모여 재상을 뽑았다",
+      "제가 회의에서 국가 중대사를 결정했다",
+      "화백 회의에서 만장일치로 국가의 큰일을 결정했다"
+    ],
+    "correctIndex": 1,
+    "explanation": "부여는 왕 아래 마가·우가·저가·구가라는 가들이 있어 각각 사출도라는 행정 구역을 다스리는 연맹 왕국이었습니다.",
+    "memoryKeyword": "부여 사출도 마가우가저가구가",
+    "sourceRefs": [
+      {
+        "url": "https://ko.wikipedia.org/wiki/부여",
+        "title": "위키백과 - 부여"
+      }
+    ],
+    "sourceAccessedAt": "2026-08-29",
+    "rightsType": "self_created",
+    "aiGenerationMeta": {
+      "model": "claude-opus-4",
+      "generatedAt": "2026-08-29T12:00:00.000Z",
+      "promptVersion": "full-v1"
+    }
+  },
+  {
+    "era": "prehistoric",
+    "topic": "society",
+    "ability": "fact",
+    "difficulty": 2,
+    "prompt": "고구려의 초기 풍습으로 옳은 것은?",
+    "choices": [
+      "민며느리제로 여자아이를 미리 데려와 길러 혼인시켰다",
+      "소도에 죄인이 숨으면 잡아가지 못했다",
+      "책화로 부족 경계 침범을 배상하게 했다",
+      "혼인하면 남자가 처가에 머무는 서옥제가 있었다",
+      "12월에 영고라는 제천 행사를 크게 열었다"
+    ],
+    "correctIndex": 3,
+    "explanation": "고구려에는 혼인 후 남자가 신부 집 뒤에 지은 서옥에 머물다가 자식이 크면 집으로 돌아가는 서옥제가 있었고, 10월에 동맹을 열었습니다.",
+    "memoryKeyword": "고구려 서옥제 동맹",
+    "sourceRefs": [
+      {
+        "url": "https://ko.wikipedia.org/wiki/서옥제",
+        "title": "위키백과 - 서옥제"
+      }
+    ],
+    "sourceAccessedAt": "2026-08-29",
+    "rightsType": "self_created",
+    "aiGenerationMeta": {
+      "model": "claude-opus-4",
+      "generatedAt": "2026-08-29T12:00:00.000Z",
+      "promptVersion": "full-v1"
+    }
+  },
+  {
+    "era": "prehistoric",
+    "topic": "heritage",
+    "ability": "fact",
+    "difficulty": 2,
+    "prompt": "신석기 시대 사람들이 살던 집의 형태로 옳은 것은?",
+    "choices": [
+      "기와를 올린 목조 건물에서 살았다",
+      "강가나 바닷가에 움집을 짓고 살았다",
+      "동굴과 바위 그늘에서 무리 지어 살았다",
+      "성곽 안에 판축 기법으로 집을 지었다",
+      "온돌을 놓은 초가집에서 살았다"
+    ],
+    "correctIndex": 1,
+    "explanation": "신석기 시대에는 강가나 바닷가에 바닥을 파고 지붕을 덮은 움집을 지었고, 가운데 화덕을 두었습니다. 동굴 생활은 구석기 시대입니다.",
+    "memoryKeyword": "신석기 움집 화덕",
+    "sourceRefs": [
+      {
+        "url": "https://ko.wikipedia.org/wiki/움집",
+        "title": "위키백과 - 움집"
+      }
+    ],
+    "sourceAccessedAt": "2026-08-29",
+    "rightsType": "self_created",
+    "aiGenerationMeta": {
+      "model": "claude-opus-4",
+      "generatedAt": "2026-08-29T12:00:00.000Z",
+      "promptVersion": "full-v1"
+    }
+  },
+  {
+    "era": "ancient",
+    "topic": "politics",
+    "ability": "chronology",
+    "difficulty": 3,
+    "prompt": "삼국이 불교를 받아들인 순서로 옳은 것은?",
+    "choices": [
+      "신라 → 백제 → 고구려 순서",
+      "백제 → 고구려 → 신라",
+      "고구려 → 신라 → 백제",
+      "고구려 → 백제 → 신라",
+      "백제 → 신라 → 고구려"
+    ],
+    "correctIndex": 3,
+    "explanation": "고구려 소수림왕, 백제 침류왕이 먼저 불교를 받아들였고, 신라는 귀족의 반발로 늦어져 법흥왕 때 이차돈의 순교를 거쳐 공인했습니다.",
+    "memoryKeyword": "불교 수용 고구려 백제 신라",
+    "sourceRefs": [
+      {
+        "url": "https://ko.wikipedia.org/wiki/한국의_불교",
+        "title": "위키백과 - 한국의 불교"
+      }
+    ],
+    "sourceAccessedAt": "2026-08-29",
+    "rightsType": "self_created",
+    "aiGenerationMeta": {
+      "model": "claude-opus-4",
+      "generatedAt": "2026-08-29T12:00:00.000Z",
+      "promptVersion": "full-v1"
+    }
+  },
+  {
+    "era": "goryeo",
+    "topic": "society",
+    "ability": "fact",
+    "difficulty": 3,
+    "prompt": "고려 말 권문세족에 대한 설명으로 옳은 것은?",
+    "choices": [
+      "성리학을 공부하고 과거로 진출한 세력이다",
+      "원과의 관계를 배경으로 대농장을 소유한 세력이다",
+      "지방에 서원을 세우고 향약을 보급한 사림 세력이다",
+      "무신정변으로 권력을 잡은 세력이다",
+      "동학을 믿고 농민 운동을 이끈 세력이다"
+    ],
+    "correctIndex": 1,
+    "explanation": "도평의사사를 장악하고 산천을 경계로 삼는 농장을 가졌습니다. 성리학을 공부하고 과거로 진출한 세력은 신진 사대부입니다.",
+    "memoryKeyword": "권문세족 원 배경 대농장",
+    "sourceRefs": [
+      {
+        "url": "https://ko.wikipedia.org/wiki/권문세족",
+        "title": "위키백과 - 권문세족"
+      }
+    ],
+    "sourceAccessedAt": "2026-08-29",
+    "rightsType": "self_created",
+    "aiGenerationMeta": {
+      "model": "claude-opus-4",
+      "generatedAt": "2026-08-29T12:00:00.000Z",
+      "promptVersion": "full-v1"
+    }
+  },
+  {
+    "era": "goryeo",
+    "topic": "culture",
+    "ability": "fact",
+    "difficulty": 3,
+    "prompt": "고려의 교육 기관으로 옳은 것은?",
+    "choices": [
+      "국자감을 두었고 사학 12도가 번성했다",
+      "태학을 세워 유학을 가르쳤다",
+      "성균관을 처음 세우고 지방에 서원을 두었다",
+      "육영 공원을 세워 외국어를 가르쳤다",
+      "서당에서만 교육이 이루어졌다"
+    ],
+    "correctIndex": 0,
+    "explanation": "고려는 국립 교육 기관으로 국자감을 두었고, 최충의 9재 학당을 비롯한 사학 12도가 번성해 관학이 위축되자 예종이 양현고를 두어 진흥을 꾀했습니다.",
+    "memoryKeyword": "고려 국자감 9재학당 사학12도",
+    "sourceRefs": [
+      {
+        "url": "https://ko.wikipedia.org/wiki/국자감_(고려)",
+        "title": "위키백과 - 국자감"
+      }
+    ],
+    "sourceAccessedAt": "2026-08-29",
+    "rightsType": "self_created",
+    "aiGenerationMeta": {
+      "model": "claude-opus-4",
+      "generatedAt": "2026-08-29T12:00:00.000Z",
+      "promptVersion": "full-v1"
+    }
+  },
+  {
+    "era": "joseon_late",
+    "topic": "economy",
+    "ability": "fact",
+    "difficulty": 3,
+    "prompt": "조선 후기 삼정 중 환곡의 문란을 바르게 설명한 것은?",
+    "choices": [
+      "죽은 사람에게도 군포를 물린 것이다",
+      "토지를 갖지 못한 사람에게까지 전세를 물린 매우 심각한 폐단이다",
+      "구휼 제도가 고리대로 변질되어 강제로 빌려주고 이자를 받았다",
+      "어린아이에게 군포를 물린 것이다",
+      "이웃에게 대신 세금을 물린 것이다"
+    ],
+    "correctIndex": 2,
+    "explanation": "환곡은 봄에 곡식을 빌려주고 가을에 갚게 하는 구휼 제도였으나, 강제로 빌려주고 높은 이자를 붙이는 고리대로 변질되어 가장 큰 폐단이 되었습니다.",
+    "memoryKeyword": "환곡 구휼 고리대 변질",
+    "sourceRefs": [
+      {
+        "url": "https://ko.wikipedia.org/wiki/환곡",
+        "title": "위키백과 - 환곡"
+      }
+    ],
+    "sourceAccessedAt": "2026-08-29",
+    "rightsType": "self_created",
+    "aiGenerationMeta": {
+      "model": "claude-opus-4",
+      "generatedAt": "2026-08-29T12:00:00.000Z",
+      "promptVersion": "full-v1"
+    }
+  },
+  {
+    "era": "joseon_late",
+    "topic": "culture",
+    "ability": "fact",
+    "difficulty": 3,
+    "prompt": "최제우가 창시한 동학에 대한 설명으로 옳은 것은?",
+    "choices": [
+      "서학을 그대로 받아들여 포교했다",
+      "불교와 도교를 결합한 종교다",
+      "사람이 곧 하늘이라는 인내천 사상을 내세웠다",
+      "양반 중심의 신분 질서를 그대로 옹호하려 했다",
+      "일본에서 들어온 종교다"
+    ],
+    "correctIndex": 2,
+    "explanation": "서학에 맞서 창시된 종교로 신분 차별을 부정했습니다. 정부는 혹세무민을 이유로 최제우를 처형했습니다.",
+    "memoryKeyword": "동학 최제우 인내천",
+    "sourceRefs": [
+      {
+        "url": "https://ko.wikipedia.org/wiki/동학",
+        "title": "위키백과 - 동학"
+      }
+    ],
+    "sourceAccessedAt": "2026-08-29",
+    "rightsType": "self_created",
+    "aiGenerationMeta": {
+      "model": "claude-opus-4",
+      "generatedAt": "2026-08-29T12:00:00.000Z",
+      "promptVersion": "full-v1"
+    }
+  },
+  {
+    "era": "joseon_late",
+    "topic": "politics",
+    "ability": "fact",
+    "difficulty": 3,
+    "prompt": "조선 후기 일본과의 관계에 대한 설명으로 옳은 것은?",
+    "choices": [
+      "국교를 완전히 끊고 어떤 교류도 하지 않게 되었다고 본다",
+      "통신사를 파견해 문화를 전하고 부산에 왜관을 두었다",
+      "일본에 조공을 바쳤다",
+      "일본의 요구로 개항했다",
+      "일본과 군사 동맹을 맺었다"
+    ],
+    "correctIndex": 1,
+    "explanation": "국교 회복 후 조선은 일본의 요청으로 통신사를 보내 선진 문물을 전했고, 부산에 왜관을 두어 제한된 무역을 허용했습니다.",
+    "memoryKeyword": "조선후기 통신사 왜관 부산",
+    "sourceRefs": [
+      {
+        "url": "https://ko.wikipedia.org/wiki/조선통신사",
+        "title": "위키백과 - 조선통신사"
+      }
+    ],
+    "sourceAccessedAt": "2026-08-29",
+    "rightsType": "self_created",
+    "aiGenerationMeta": {
+      "model": "claude-opus-4",
+      "generatedAt": "2026-08-29T12:00:00.000Z",
+      "promptVersion": "full-v1"
+    }
+  },
+  {
+    "era": "enlightenment",
+    "topic": "politics",
+    "ability": "fact",
+    "difficulty": 3,
+    "prompt": "갑오개혁을 추진한 기구로 옳은 것은?",
+    "choices": ["통리기무아문", "교정청", "군국기무처", "중추원", "탁지아문"],
+    "correctIndex": 2,
+    "explanation": "제1차 갑오개혁은 군국기무처에서 추진했습니다. 통리기무아문은 개항 직후 개화 정책을 맡은 기구입니다.",
+    "memoryKeyword": "갑오개혁 군국기무처",
+    "sourceRefs": [
+      {
+        "url": "https://ko.wikipedia.org/wiki/군국기무처",
+        "title": "위키백과 - 군국기무처"
+      }
+    ],
+    "sourceAccessedAt": "2026-08-29",
+    "rightsType": "self_created",
+    "aiGenerationMeta": {
+      "model": "claude-opus-4",
+      "generatedAt": "2026-08-29T12:00:00.000Z",
+      "promptVersion": "full-v1"
+    }
+  },
+  {
+    "era": "enlightenment",
+    "topic": "economy",
+    "ability": "fact",
+    "difficulty": 3,
+    "prompt": "개항 이후 일본의 경제 침탈에 대한 설명으로 옳은 것은?",
+    "choices": [
+      "조선에 관세 자주권을 인정했다",
+      "일본이 조선에 차관을 갚아 주었다",
+      "무관세와 곡물 유출로 조선 경제가 큰 타격을 입었다",
+      "일본 상인의 활동을 개항장 안으로만 제한해 유지하게 했다",
+      "조선의 화폐를 그대로 사용했다"
+    ],
+    "correctIndex": 2,
+    "explanation": "강화도 조약 부속 조약으로 무관세 무역이 이루어지고 일본 상인이 곡물을 대량 반출하면서 국내 곡물 가격이 올라 농민 생활이 어려워졌습니다.",
+    "memoryKeyword": "개항 무관세 곡물 유출 방곡령",
+    "sourceRefs": [
+      {
+        "url": "https://ko.wikipedia.org/wiki/방곡령",
+        "title": "위키백과 - 방곡령"
+      }
+    ],
+    "sourceAccessedAt": "2026-08-29",
+    "rightsType": "self_created",
+    "aiGenerationMeta": {
+      "model": "claude-opus-4",
+      "generatedAt": "2026-08-29T12:00:00.000Z",
+      "promptVersion": "full-v1"
+    }
+  },
+  {
+    "era": "enlightenment",
+    "topic": "society",
+    "ability": "fact",
+    "difficulty": 3,
+    "prompt": "갑오개혁으로 이루어진 사회 변화로 옳은 것은?",
+    "choices": [
+      "과부가 다시 혼인하는 것을 법으로 금지했다",
+      "단발령을 시행했다",
+      "서원을 대폭 정리했다",
+      "호포제를 실시했다",
+      "공사 노비법을 폐지하고 조혼을 금지했다"
+    ],
+    "correctIndex": 4,
+    "explanation": "갑오개혁으로 공사 노비법이 폐지되고 조혼 금지, 과부 재가 허용, 연좌제 폐지가 이루어져 신분제가 법적으로 무너졌습니다.",
+    "memoryKeyword": "갑오개혁 노비법 폐지 조혼금지 재가허용",
+    "sourceRefs": [
+      {
+        "url": "https://ko.wikipedia.org/wiki/갑오개혁",
+        "title": "위키백과 - 갑오개혁"
+      }
+    ],
+    "sourceAccessedAt": "2026-08-29",
+    "rightsType": "self_created",
+    "aiGenerationMeta": {
+      "model": "claude-opus-4",
+      "generatedAt": "2026-08-29T12:00:00.000Z",
+      "promptVersion": "full-v1"
+    }
+  },
+  {
+    "era": "japanese_occupation",
+    "topic": "politics",
+    "ability": "fact",
+    "difficulty": 3,
+    "prompt": "간도 참변에 대한 설명으로 옳은 것은?",
+    "choices": [
+      "일본군이 보복으로 간도 한인을 학살한 사건이다",
+      "독립군이 러시아에서 무장 해제를 당한 사건이다",
+      "일본군이 만주를 침략한 사건이다",
+      "임시 정부가 분열된 사건이다",
+      "의열단이 벌인 의거다"
+    ],
+    "correctIndex": 0,
+    "explanation": "봉오동과 청산리에서 패한 일본군은 보복으로 간도 지역 한인 마을을 습격해 주민을 학살하고 집과 학교를 불태웠습니다.",
+    "memoryKeyword": "간도참변 보복 한인 학살",
+    "sourceRefs": [
+      {
+        "url": "https://ko.wikipedia.org/wiki/간도_참변",
+        "title": "위키백과 - 간도 참변"
+      }
+    ],
+    "sourceAccessedAt": "2026-08-29",
+    "rightsType": "self_created",
+    "aiGenerationMeta": {
+      "model": "claude-opus-4",
+      "generatedAt": "2026-08-29T12:00:00.000Z",
+      "promptVersion": "full-v1"
+    }
+  },
+  {
+    "era": "modern",
+    "topic": "politics",
+    "ability": "fact",
+    "difficulty": 3,
+    "prompt": "5·16 군사 정변 이후 나타난 변화로 옳은 것은?",
+    "choices": [
+      "내각 책임제가 도입되었다",
+      "국가 재건 최고 회의가 설치되고 군정이 실시되었다",
+      "대통령 직선제로 바꾸는 개헌이 곧바로 이루어졌다",
+      "지방 자치가 전면 실시되었다",
+      "남북 기본 합의서가 채택되었다"
+    ],
+    "correctIndex": 1,
+    "explanation": "박정희 등 군부는 5·16 군사 정변으로 장면 내각을 무너뜨리고 국가 재건 최고 회의를 세워 군정을 실시한 뒤 대통령제로 개헌했습니다.",
+    "memoryKeyword": "5·16 국가재건최고회의 군정",
+    "sourceRefs": [
+      {
+        "url": "https://ko.wikipedia.org/wiki/5·16_군사정변",
+        "title": "위키백과 - 5·16 군사정변"
+      }
+    ],
+    "sourceAccessedAt": "2026-08-29",
+    "rightsType": "self_created",
+    "aiGenerationMeta": {
+      "model": "claude-opus-4",
+      "generatedAt": "2026-08-29T12:00:00.000Z",
+      "promptVersion": "full-v1"
+    }
+  }
+]
