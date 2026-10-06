@@ -1,4 +1,7 @@
+import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
+import { db } from '../db/client.ts';
+import { deletionJobs } from '../db/schema/ops.ts';
 import { authenticate, requireUser } from '../http/authenticate.ts';
 import { AppError } from '../http/errors.ts';
 import type { AppInstance } from '../http/types.ts';
@@ -58,12 +61,18 @@ export function registerAccountRoutes(app: AppInstance): void {
   );
 
   app.get('/v1/account/deletion/:jobId', { preHandler: authenticate }, async (request) => {
-    // 삭제된 계정은 authenticate 단계에서 403 이므로,
-    // 이 경로는 삭제 요청 직후(같은 토큰이 아직 유효한 순간)나 운영 확인용이다.
-    requireUser(request);
+    // 삭제된 계정의 토큰은 거부한다. 재가입한 계정도 이전 계정의 작업을 조회할 수 없다.
+    const user = requireUser(request);
 
     const params = z.object({ jobId: z.string().uuid() }).safeParse(request.params);
     if (!params.success) throw new AppError('INVALID_REQUEST');
+
+    const [ownedJob] = await db
+      .select({ id: deletionJobs.id })
+      .from(deletionJobs)
+      .where(and(eq(deletionJobs.id, params.data.jobId), eq(deletionJobs.subjectUserId, user.id)))
+      .limit(1);
+    if (ownedJob == null) throw new AppError('NOT_FOUND');
 
     return await getDeletionStatus(params.data.jobId);
   });

@@ -234,6 +234,134 @@ describe('DELETE /v1/account', () => {
   });
 });
 
+describe('GET /v1/account/deletion/:jobId', () => {
+  it('다른 사용자는 요청 중이거나 완료된 삭제 작업을 조회할 수 없다', async () => {
+    const otherToken = await bootstrap('anon-other-deletion-user');
+    const deleted = await app.inject({
+      method: 'DELETE',
+      url: '/v1/account',
+      headers: auth(),
+      payload: { confirm: '삭제' },
+    });
+    expect(deleted.statusCode).toBe(202);
+    const { jobId } = deleted.json<{ jobId: string }>();
+
+    const requested = await app.inject({
+      method: 'GET',
+      url: `/v1/account/deletion/${jobId}`,
+      headers: { authorization: `Bearer ${otherToken}` },
+    });
+    expect(requested.statusCode).toBe(404);
+    expect(requested.json<{ code: string }>().code).toBe('NOT_FOUND');
+
+    expect(await runPendingDeletionJobs()).toBe(1);
+    const [job] = await sql<{ status: string }[]>`
+      select status from deletion_jobs where id = ${jobId}
+    `;
+    expect(job?.status).toBe('completed');
+    const completed = await app.inject({
+      method: 'GET',
+      url: `/v1/account/deletion/${jobId}`,
+      headers: { authorization: `Bearer ${otherToken}` },
+    });
+    expect(completed.statusCode).toBe(404);
+    expect(completed.json<{ code: string }>().code).toBe('NOT_FOUND');
+  });
+
+  it('삭제한 계정의 토큰과 같은 식별키로 재가입한 계정도 이전 작업을 조회할 수 없다', async () => {
+    const [owner] = await sql<{ id: string }[]>`select id from users`;
+    const deleted = await app.inject({
+      method: 'DELETE',
+      url: '/v1/account',
+      headers: auth(),
+      payload: { confirm: '삭제' },
+    });
+    expect(deleted.statusCode).toBe(202);
+    const { jobId } = deleted.json<{ jobId: string }>();
+    const newToken = await bootstrap();
+    const me = await app.inject({
+      method: 'GET',
+      url: '/v1/me',
+      headers: { authorization: `Bearer ${newToken}` },
+    });
+    expect(me.statusCode).toBe(200);
+    const [newUser] = await sql<{ id: string }[]>`
+      select id from users where identity_status = 'active'
+    `;
+    expect(newUser?.id).not.toBe(owner!.id);
+
+    for (const status of ['requested', 'completed']) {
+      if (status === 'completed') expect(await runPendingDeletionJobs()).toBe(1);
+      const [job] = await sql<{ status: string; subject_user_id: string }[]>`
+        select status, subject_user_id from deletion_jobs where id = ${jobId}
+      `;
+      expect(job).toEqual({ status, subject_user_id: owner!.id });
+
+      const oldToken = await app.inject({
+        method: 'GET',
+        url: `/v1/account/deletion/${jobId}`,
+        headers: auth(),
+      });
+      expect(oldToken.statusCode).toBe(403);
+      expect(oldToken.json<{ code: string }>().code).toBe('USER_DELETED');
+
+      const reregistered = await app.inject({
+        method: 'GET',
+        url: `/v1/account/deletion/${jobId}`,
+        headers: { authorization: `Bearer ${newToken}` },
+      });
+      expect(reregistered.statusCode).toBe(404);
+      expect(reregistered.json<{ code: string }>().code).toBe('NOT_FOUND');
+    }
+  });
+
+  it('활성 사용자 조회는 작업의 subject_user_id 와 일치할 때만 응답한다', async () => {
+    const [owner] = await sql<{ id: string }[]>`select id from users`;
+    // 소유권 필터가 모든 요청을 거부하는 구현이어도 음성 테스트만 통과하지 않게 한다.
+    // 이 DB fixture 는 삭제된 계정의 인증을 다시 허용하지 않는다.
+    const [job] = await sql<{ id: string }[]>`
+      insert into deletion_jobs (subject_user_id) values (${owner!.id}) returning id
+    `;
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/account/deletion/${job!.id}`,
+      headers: auth(),
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      jobId: job!.id,
+      status: 'requested',
+      completedAt: null,
+      steps: [],
+    });
+  });
+
+  it('인증, UUID 형식, 존재하지 않는 작업 검증을 유지한다', async () => {
+    const missingJobId = '00000000-0000-4000-8000-000000000000';
+    const unauthenticated = await app.inject({
+      method: 'GET',
+      url: `/v1/account/deletion/${missingJobId}`,
+    });
+    expect(unauthenticated.statusCode).toBe(401);
+
+    const malformed = await app.inject({
+      method: 'GET',
+      url: '/v1/account/deletion/not-a-uuid',
+      headers: auth(),
+    });
+    expect(malformed.statusCode).toBe(400);
+    expect(malformed.json<{ code: string }>().code).toBe('INVALID_REQUEST');
+
+    const missing = await app.inject({
+      method: 'GET',
+      url: `/v1/account/deletion/${missingJobId}`,
+      headers: auth(),
+    });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json<{ code: string }>().code).toBe('NOT_FOUND');
+  });
+});
+
 describe('삭제 이행 배치 (하드게이트 P0: 데이터 맵 추적)', () => {
   it('큐 감시는 15분 경계를 포함하고 완료된 작업은 제외한다', async () => {
     await app.inject({

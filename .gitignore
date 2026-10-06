@@ -92,3 +92,14 @@ content/*-review.html
 # Neon 접속 정보 임시 파일. 커밋 금지.
 backend/.neon-url.txt
 backend/.admtok.txt
+
+# 문항 검수·운영 발행 기록은 로컬 비공개 보관한다.
+# 문항 원본과 테스트용 비민감 fixture는 버전 관리 대상으로 유지한다.
+/assets/outreach/learning-quality-audit.json
+/assets/outreach/corrections-*.json
+/assets/outreach/verification-*.json
+/assets/outreach/priority-*
+/scripts/publish-priority-content.mjs
+
+# 과거 로컬 복원 실험은 보관만 하고 커밋 대상에서 제외한다.
+/scripts/rehearse-deletion-restore.mjs

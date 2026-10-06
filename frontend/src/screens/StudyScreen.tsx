@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ApiError } from '../api/client.ts';
 import { useSubmitAnswer, useTodaySession } from '../api/hooks.ts';
 import { ERA_LABELS, TOPIC_LABELS, type SessionItem } from '../api/types.ts';
 import { trackClick, trackOperational, trackScreen } from '../analytics/events.ts';
@@ -46,6 +47,9 @@ export function StudyScreen(): JSX.Element {
   const items = useMemo(() => session.data?.items ?? [], [session.data]);
   const current: SessionItem | undefined = items[cursor];
   const showExplanation = submitAnswer.data != null || current?.answered === true;
+  const needsSessionRefresh =
+    submitAnswer.error instanceof ApiError &&
+    (submitAnswer.error.status === 409 || submitAnswer.error.status === 422);
   const questionReady =
     session.isSuccess &&
     current != null &&
@@ -73,6 +77,17 @@ export function StudyScreen(): JSX.Element {
 
   const remaining = items.filter((item) => !item.voided && !item.answered).length;
 
+  const refreshSession = async (cancelRefetch = false): Promise<void> => {
+    // 충돌 이전의 조회는 교체하고, 이후 새로고침·재시도는 재동기화 요청을 기다린다.
+    const refreshed = await session.refetch({ cancelRefetch });
+    if (!refreshed.isSuccess) return;
+    // 권위 있는 상태를 받은 뒤에만 오류 잠금을 해제한다. 실패 시 재시도 경로를 유지한다.
+    if (cancelRefetch || needsSessionRefresh) {
+      submitAnswer.reset();
+      setSelected(null);
+    }
+  };
+
   const goNext = (): void => {
     submitAnswer.reset();
     setSelected(null);
@@ -95,18 +110,39 @@ export function StudyScreen(): JSX.Element {
   };
 
   const submit = (): void => {
-    if (current == null || selected == null) return;
+    if (
+      current == null ||
+      selected == null ||
+      current.voided ||
+      showExplanation ||
+      submitAnswer.isPending ||
+      needsSessionRefresh
+    ) {
+      return;
+    }
     // 문항 원문이나 고른 답을 보내지 않는다. 진행 위치만 남긴다 (07 §7).
     trackClick('answer', { slot_index: current.slotIndex });
-    submitAnswer.mutate({
-      questionRevisionId: current.questionRevisionId,
-      selectedIndex: selected,
-    });
+    submitAnswer.mutate(
+      {
+        questionRevisionId: current.questionRevisionId,
+        selectedIndex: selected,
+      },
+      {
+        onError: (error) => {
+          if (error instanceof ApiError && (error.status === 409 || error.status === 422)) {
+            void refreshSession(true);
+          }
+        },
+      },
+    );
   };
 
   return (
     <Screen>
-      <AsyncBoundary query={session} loadingLabel="오늘의 문제를 준비하고 있어요">
+      <AsyncBoundary
+        query={{ ...session, refetch: () => void refreshSession() }}
+        loadingLabel="오늘의 문제를 준비하고 있어요"
+      >
         {(data) => {
           if (data.session.completedAt != null && remaining === 0) {
             return (
@@ -218,7 +254,7 @@ export function StudyScreen(): JSX.Element {
                     </h1>
 
                     <fieldset
-                      disabled={showExplanation || submitAnswer.isPending}
+                      disabled={showExplanation || submitAnswer.isPending || needsSessionRefresh}
                       style={{ border: 'none', padding: 0, margin: 0 }}
                     >
                       <legend className="sr-only">선택지</legend>
@@ -309,8 +345,17 @@ export function StudyScreen(): JSX.Element {
                   </div>
                 )}
 
-                {submitAnswer.isError && (
-                  <ErrorState error={submitAnswer.error} onRetry={() => submitAnswer.reset()} />
+                {submitAnswer.isError && !current.answered && !current.voided && (
+                  <ErrorState
+                    error={submitAnswer.error}
+                    onRetry={() => {
+                      if (needsSessionRefresh) {
+                        void refreshSession();
+                      } else {
+                        submitAnswer.reset();
+                      }
+                    }}
+                  />
                 )}
               </Section>
 
@@ -326,9 +371,11 @@ export function StudyScreen(): JSX.Element {
                 ) : (
                   <ActionButton
                     onClick={submit}
-                    disabled={selected == null}
-                    pending={submitAnswer.isPending}
-                    pendingLabel="채점하고 있어요"
+                    disabled={selected == null || needsSessionRefresh}
+                    pending={submitAnswer.isPending || (needsSessionRefresh && session.isFetching)}
+                    pendingLabel={
+                      needsSessionRefresh ? '오늘의 문제를 준비하고 있어요' : '채점하고 있어요'
+                    }
                   >
                     답 제출하기
                   </ActionButton>

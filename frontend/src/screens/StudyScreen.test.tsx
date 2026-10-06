@@ -101,6 +101,49 @@ function mockFetch(handler: (url: string, init?: RequestInit) => unknown) {
   });
 }
 
+function deferredResponse() {
+  let resolve!: (response: Response) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<Response>((resolveResponse, rejectResponse) => {
+    resolve = resolveResponse;
+    reject = rejectResponse;
+  });
+  return { promise, resolve, reject };
+}
+
+function answerStateError(status: 409 | 422) {
+  return Response.json(
+    {
+      code: status === 409 ? 'ANSWER_CONFLICT' : 'QUESTION_VOIDED',
+      message: status === 409 ? '이미 저장된 답이 있어요.' : '확인 중인 문항이에요.',
+      retryable: false,
+      requestId: 'request-1',
+    },
+    { status },
+  );
+}
+
+function authoritativeSession(status: 409 | 422): SessionResponse {
+  return {
+    ...session,
+    items: [
+      makeItem(
+        0,
+        status === 409
+          ? {
+              answered: true,
+              selectedIndex: 3,
+              correctIndex: 0,
+              isCorrect: false,
+              explanation: '서버에 저장된 해설입니다',
+            }
+          : { voided: true },
+      ),
+      ...session.items.slice(1),
+    ],
+  };
+}
+
 beforeEach(() => {
   vi.stubEnv('VITE_API_BASE_URL', 'http://test.local');
   trackImpression.mockClear();
@@ -203,6 +246,275 @@ describe('StudyScreen', () => {
       { questionRevisionId: 'rev-0', selectedIndex: 2 },
     ]);
   });
+
+  it.each([
+    { status: 409, strict: false },
+    { status: 422, strict: false },
+    { status: 409, strict: true },
+    { status: 422, strict: true },
+  ] as const)(
+    '$status 재조회가 느려도 연타·새로고침으로 오래된 답을 다시 보내지 않는다 (StrictMode=$strict)',
+    async ({ status, strict }) => {
+      const reconciliation = deferredResponse();
+      let state = authoritativeSession(status);
+      let sessionRequests = 0;
+      const bodies: Array<{ questionRevisionId: string; selectedIndex: number }> = [];
+      vi.stubGlobal('fetch', (input: string, init?: RequestInit) => {
+        if (String(input).includes('/answer')) {
+          const body = JSON.parse(String(init?.body)) as (typeof bodies)[number];
+          bodies.push(body);
+          if (bodies.length === 1) return Promise.resolve(answerStateError(status));
+          state = {
+            ...state,
+            items: state.items.map((item) =>
+              item.questionRevisionId === body.questionRevisionId
+                ? {
+                    ...item,
+                    answered: true,
+                    selectedIndex: body.selectedIndex,
+                    correctIndex: answerResponse.correctIndex,
+                    isCorrect: answerResponse.isCorrect,
+                    explanation: answerResponse.explanation,
+                  }
+                : item,
+            ),
+          };
+          return Promise.resolve(Response.json(answerResponse));
+        }
+        sessionRequests++;
+        if (sessionRequests === 1) return Promise.resolve(Response.json(session));
+        if (sessionRequests === 2) return reconciliation.promise;
+        return Promise.resolve(Response.json(state));
+      });
+      renderScreen(strict);
+      await screen.findByText('문항 0 입니다');
+      await userEvent.click(screen.getAllByRole('radio')[2]!);
+      await userEvent.dblClick(screen.getByRole('button', { name: '답 제출하기' }));
+      await screen.findByRole('alert');
+      const pending = screen.getByRole('button', { name: '오늘의 문제를 준비하고 있어요' });
+      expect(pending.hasAttribute('disabled')).toBe(true);
+      expect(pending.getAttribute('aria-busy')).toBe('true');
+      expect(screen.getAllByRole('radio')[0]!.closest('fieldset')?.hasAttribute('disabled')).toBe(
+        true,
+      );
+      await userEvent.click(screen.getAllByRole('radio')[1]!);
+      expect(screen.getAllByRole<HTMLInputElement>('radio')[2]!.checked).toBe(true);
+      await userEvent.dblClick(pending);
+      await userEvent.dblClick(screen.getByRole('button', { name: '새로고침' }));
+      expect(screen.getByRole('alert')).toBeTruthy();
+      expect(
+        screen
+          .getByRole('button', { name: '오늘의 문제를 준비하고 있어요' })
+          .hasAttribute('disabled'),
+      ).toBe(true);
+      expect(sessionRequests).toBe(2);
+      expect(bodies).toEqual([{ questionRevisionId: 'rev-0', selectedIndex: 2 }]);
+
+      reconciliation.resolve(Response.json(state));
+      if (status === 409) {
+        await screen.findByText('서버에 저장된 해설입니다');
+        expect(screen.getAllByRole<HTMLInputElement>('radio')[3]!.checked).toBe(true);
+        expect(screen.getAllByRole<HTMLInputElement>('radio')[2]!.checked).toBe(false);
+        expect(screen.getByText('틀렸어요')).toBeTruthy();
+      } else {
+        await screen.findByText('확인 중인 문항');
+        expect(screen.queryByText('문항 0 입니다')).toBeNull();
+        expect(screen.queryAllByRole('radio')).toHaveLength(0);
+        expect(screen.queryByText('정답 근거 해설입니다')).toBeNull();
+      }
+      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+      expect(sessionRequests).toBe(2);
+      await userEvent.click(screen.getByRole('button', { name: '다음 문제' }));
+      await screen.findByText('문항 1 입니다');
+      expect(
+        screen.getAllByRole<HTMLInputElement>('radio').every((choice) => !choice.checked),
+      ).toBe(true);
+      expect(screen.getByRole('button', { name: '답 제출하기' }).hasAttribute('disabled')).toBe(
+        true,
+      );
+      await userEvent.click(screen.getAllByRole('radio')[1]!);
+      await userEvent.click(screen.getByRole('button', { name: '답 제출하기' }));
+      await screen.findByText('정답 근거 해설입니다');
+      expect(bodies).toEqual([
+        { questionRevisionId: 'rev-0', selectedIndex: 2 },
+        { questionRevisionId: 'rev-1', selectedIndex: 1 },
+      ]);
+    },
+  );
+
+  it.each([409, 422] as const)(
+    '%i 즉시 재조회에서도 서버 답안·무효 상태를 반영한다',
+    async (status) => {
+      let sessionRequests = 0;
+      let answerRequests = 0;
+      vi.stubGlobal('fetch', (input: string) => {
+        if (String(input).includes('/answer')) {
+          answerRequests++;
+          return Promise.resolve(answerStateError(status));
+        }
+        sessionRequests++;
+        return Promise.resolve(
+          Response.json(sessionRequests === 1 ? session : authoritativeSession(status)),
+        );
+      });
+      renderScreen();
+      await screen.findByText('문항 0 입니다');
+      await userEvent.click(screen.getAllByRole('radio')[2]!);
+      await userEvent.click(screen.getByRole('button', { name: '답 제출하기' }));
+      await screen.findByText(status === 409 ? '서버에 저장된 해설입니다' : '확인 중인 문항');
+      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+      expect(sessionRequests).toBe(2);
+      expect(answerRequests).toBe(1);
+      await userEvent.click(screen.getByRole('button', { name: '다음 문제' }));
+      expect(await screen.findByText('문항 1 입니다')).toBeTruthy();
+      expect(screen.queryByRole('alert')).toBeNull();
+    },
+  );
+
+  it.each([409, 422] as const)(
+    '%i 이전에 시작된 조회가 오래된 미답 상태를 반환해도 새 재조회가 끝날 때까지 잠금을 유지한다',
+    async (status) => {
+      const previousRequest = deferredResponse();
+      const reconciliation = deferredResponse();
+      let sessionRequests = 0;
+      let answerRequests = 0;
+      vi.stubGlobal('fetch', (input: string) => {
+        if (String(input).includes('/answer')) {
+          answerRequests++;
+          return Promise.resolve(answerStateError(status));
+        }
+        sessionRequests++;
+        return sessionRequests === 1 ? previousRequest.promise : reconciliation.promise;
+      });
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+      });
+      client.setQueryData(queryKeys.session, session);
+      renderScreen(false, client);
+      await screen.findByText('문항 0 입니다');
+      await waitFor(() => expect(sessionRequests).toBe(1));
+      await userEvent.click(screen.getAllByRole('radio')[2]!);
+      await userEvent.click(screen.getByRole('button', { name: '답 제출하기' }));
+      await screen.findByRole('alert');
+      expect(sessionRequests).toBe(2);
+      await act(async () => {
+        previousRequest.resolve(Response.json(session));
+      });
+      expect(
+        screen
+          .getByRole('button', { name: '오늘의 문제를 준비하고 있어요' })
+          .hasAttribute('disabled'),
+      ).toBe(true);
+      await userEvent.dblClick(screen.getByRole('button', { name: '새로고침' }));
+      expect(sessionRequests).toBe(2);
+      expect(answerRequests).toBe(1);
+      expect(screen.getByRole('alert')).toBeTruthy();
+      reconciliation.resolve(Response.json(authoritativeSession(status)));
+      await screen.findByText(status === 409 ? '서버에 저장된 해설입니다' : '확인 중인 문항');
+      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+      expect(sessionRequests).toBe(2);
+      expect(answerRequests).toBe(1);
+    },
+  );
+
+  it.each([409, 422] as const)(
+    '%i 재조회가 실패해도 다시 시도가 실제 조회를 수행하고 잠금을 해제한다',
+    async (status) => {
+      const reconciliation = deferredResponse();
+      const recovery = deferredResponse();
+      let sessionRequests = 0;
+      let answerRequests = 0;
+      vi.stubGlobal('fetch', (input: string) => {
+        if (String(input).includes('/answer')) {
+          answerRequests++;
+          return Promise.resolve(answerStateError(status));
+        }
+        sessionRequests++;
+        if (sessionRequests === 1) return Promise.resolve(Response.json(session));
+        if (sessionRequests === 2) return reconciliation.promise;
+        if (sessionRequests <= 4) return Promise.reject(new Error('MOCK reconciliation offline'));
+        return recovery.promise;
+      });
+      const client = new QueryClient({
+        defaultOptions: { queries: { retryDelay: 0 }, mutations: { retry: false } },
+      });
+      renderScreen(false, client);
+      await screen.findByText('문항 0 입니다');
+      await userEvent.click(screen.getAllByRole('radio')[2]!);
+      await userEvent.click(screen.getByRole('button', { name: '답 제출하기' }));
+      await screen.findByRole('alert');
+      await userEvent.click(screen.getByRole('button', { name: '새로고침' }));
+      reconciliation.reject(new Error('MOCK reconciliation offline'));
+      await screen.findByText(/네트워크에 연결할 수 없어요/);
+      expect(sessionRequests).toBe(4);
+      expect(screen.queryByText('문항 0 입니다')).toBeNull();
+      expect(screen.queryByRole('button', { name: '답 제출하기' })).toBeNull();
+      await userEvent.dblClick(screen.getByRole('button', { name: '다시 시도' }));
+      expect(sessionRequests).toBe(5);
+      expect(answerRequests).toBe(1);
+      expect(screen.getByRole('alert')).toBeTruthy();
+      expect(screen.queryByText('문항 0 입니다')).toBeNull();
+
+      recovery.resolve(Response.json(authoritativeSession(status)));
+      await screen.findByText(status === 409 ? '서버에 저장된 해설입니다' : '확인 중인 문항');
+      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+      expect(sessionRequests).toBe(5);
+      expect(answerRequests).toBe(1);
+      await userEvent.click(screen.getByRole('button', { name: '다음 문제' }));
+      expect(await screen.findByText('문항 1 입니다')).toBeTruthy();
+      expect(screen.getAllByRole('radio')[0]!.closest('fieldset')?.hasAttribute('disabled')).toBe(
+        false,
+      );
+      await userEvent.click(screen.getAllByRole('radio')[1]!);
+      expect(screen.getByRole('button', { name: '답 제출하기' }).hasAttribute('disabled')).toBe(
+        false,
+      );
+    },
+  );
+
+  it.each([409, 422] as const)(
+    '%i 이후 재조회가 같은 미답 상태를 반환해도 조회가 끝난 뒤에만 새 선택으로 제출할 수 있다',
+    async (status) => {
+      const reconciliation = deferredResponse();
+      const bodies: unknown[] = [];
+      let sessionRequests = 0;
+      vi.stubGlobal('fetch', (input: string, init?: RequestInit) => {
+        if (String(input).includes('/answer')) {
+          bodies.push(JSON.parse(String(init?.body)));
+          return Promise.resolve(
+            bodies.length === 1 ? answerStateError(status) : Response.json(answerResponse),
+          );
+        }
+        sessionRequests++;
+        if (sessionRequests === 2) return reconciliation.promise;
+        return Promise.resolve(Response.json(session));
+      });
+      renderScreen();
+      await screen.findByText('문항 0 입니다');
+      await userEvent.click(screen.getAllByRole('radio')[2]!);
+      await userEvent.click(screen.getByRole('button', { name: '답 제출하기' }));
+      await screen.findByRole('alert');
+      expect(bodies).toHaveLength(1);
+      reconciliation.resolve(Response.json(session));
+      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+      expect(
+        screen.getAllByRole<HTMLInputElement>('radio').every((choice) => !choice.checked),
+      ).toBe(true);
+      expect(screen.getAllByRole('radio')[0]!.closest('fieldset')?.hasAttribute('disabled')).toBe(
+        false,
+      );
+      expect(screen.getByRole('button', { name: '답 제출하기' }).hasAttribute('disabled')).toBe(
+        true,
+      );
+      await userEvent.click(screen.getAllByRole('radio')[1]!);
+      await userEvent.click(screen.getByRole('button', { name: '답 제출하기' }));
+      await screen.findByText('정답 근거 해설입니다');
+      expect(bodies).toEqual([
+        { questionRevisionId: 'rev-0', selectedIndex: 2 },
+        { questionRevisionId: 'rev-0', selectedIndex: 1 },
+      ]);
+    },
+  );
 
   it('다섯 문항 모두 제출 전에 선택 표시를 갱신하고 다음 문항에서 초기화한다', async () => {
     const state = structuredClone(session);

@@ -12,8 +12,17 @@ import { Analytics } from '@apps-in-toss/web-framework';
  * 지표 설정 (공통 05 §5, 08 §6):
  *   활성 지표 = 7일 재방문
  *   대표 전환 = complete_daily_study
- *   보조 전환 = complete_review, notification_agreed
+ *   보조 전환 = complete_review, complete_notification_agreed
  *   운영     = question_report, voided_question_seen, schedule_changed
+ *
+ * 해석 경계 (#14, 2026-10-05 사용자 결정):
+ *   - complete_daily_study는 서버 완료를 뜻하며 전 문항 무효인 날도 포함한다.
+ *     유효 학습은 valid_count > 0으로 구분하고 합격 가능성으로 해석하지 않는다.
+ *   - complete_review는 오답노트 복습 표시 저장이지 재풀이 정답 판정이 아니다.
+ *   - 알림 전환은 현재 저장 경로의 성공 신호이며 신규 동의 획득만을 뜻하지 않는다.
+ *     신규/기존 동의 구분과 발송 검증은 알림 보류 해제 전에 확정해야 한다.
+ *   - SDK 호출·Promise 성공·플랫폼 수신·콘솔 집계는 서로 다른 증거다.
+ *     문서 내 복구/중복 방어는 프로세스 재시작 후 전달을 보장하지 않는다.
  *
  * ⚠️ 절대 넣지 않는 값 (07 §7, 공통 04 §4, 하드게이트 P0):
  *   - 문항 원문 / 선택지 / 사용자가 고른 답
@@ -32,15 +41,21 @@ type EventParams = Record<string, string | number | boolean>;
 
 const isDev = import.meta.env.DEV;
 
-function safeLog(operation: () => Promise<void> | undefined, name: string): void {
+function safeLog(operation: () => Promise<void> | undefined, name: string): Promise<boolean> {
   try {
     const result = operation();
+    if (result == null) return Promise.resolve(false);
     // 분석 실패가 사용자 흐름을 막으면 안 된다.
-    void Promise.resolve(result).catch((error: unknown) => {
-      if (isDev) console.warn('[analytics] 전송 실패', name, error);
-    });
-  } catch (error) {
-    if (isDev) console.warn('[analytics] 호출 실패', name, error);
+    return result.then(
+      () => true,
+      () => {
+        if (isDev) console.warn('[analytics] 전송 실패', name);
+        return false;
+      },
+    );
+  } catch {
+    if (isDev) console.warn('[analytics] 호출 실패', name);
+    return Promise.resolve(false);
   }
 }
 
@@ -73,9 +88,12 @@ export function trackImpression(elementName: string, params: EventParams = {}): 
   );
 }
 
-/** 완료 (complete_*) — 전환 지표로 콘솔에 등록하는 이벤트다. */
-export function trackComplete(eventName: string, params: EventParams = {}): void {
-  safeLog(
+/**
+ * 완료 (complete_*) — true 는 SDK Promise resolve일 뿐 플랫폼 수신/집계 확인이 아니다.
+ * 설치된 SDK에는 수신 확인이나 event 단위 idempotency 계약이 없다.
+ */
+export function trackComplete(eventName: string, params: EventParams = {}): Promise<boolean> {
+  return safeLog(
     () =>
       Analytics.log({
         log_name: `complete_${eventName}`,
@@ -120,7 +138,7 @@ export const ANALYTICS_EVENTS = {
   /** 대표 전환 (08 §6) */
   conversion: 'complete_daily_study',
   /** 보조 전환 */
-  secondary: ['complete_review', 'notification_agreed'],
+  secondary: ['complete_review', 'complete_notification_agreed'],
   /** 운영 */
   operational: ['question_report', 'voided_question_seen', 'schedule_changed'],
 } as const;
