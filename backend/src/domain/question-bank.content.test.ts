@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { ABILITIES, ERAS, RIGHTS_TYPES, TOPICS } from '../db/schema/enums.ts';
 import { evaluateCoverage } from './questions.ts';
 
+// Private content suite: run explicitly with pnpm test:content.
 // Source candidates only: these checks do not approve or publish revisions.
 const raw: unknown = JSON.parse(
   readFileSync(new URL('../../../content/all-300.json', import.meta.url), 'utf8'),
@@ -19,9 +20,26 @@ const bank = z
       choices: z.array(z.string().min(1).max(500)).length(5),
       correctIndex: z.number().int().min(0).max(4),
       explanation: z.string().min(5).max(2000),
-      sourceRefs: z.array(z.object({ title: z.string().min(1), url: z.string().url() })).min(1),
+      memoryKeyword: z.string().min(1).max(100).optional(),
+      sourceRefs: z
+        .array(
+          z.object({
+            title: z.string().min(1).max(200),
+            url: z.string().url().max(500),
+          }),
+        )
+        .min(1)
+        .max(10),
       sourceAccessedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       rightsType: z.enum(RIGHTS_TYPES),
+      rightsNote: z.string().max(500).optional(),
+      aiGenerationMeta: z
+        .object({
+          model: z.string(),
+          promptVersion: z.string(),
+          generatedAt: z.string().datetime(),
+        })
+        .optional(),
       wrongAnswerNotes: z.array(z.string().min(1).max(500)).max(5).optional(),
     }),
   )
@@ -52,7 +70,10 @@ describe('source question bank integrity (not publication approval)', () => {
       expect(new Set(q.choices.map((choice) => choice.trim())).size, q.prompt).toBe(5);
       expect(q.choices[q.correctIndex]?.trim().length, q.prompt).toBeGreaterThan(0);
       expect(q.rightsType, q.prompt).not.toBe('unknown');
-      for (const ref of q.sourceRefs) expect(new URL(ref.url).protocol).toBe('https:');
+      for (const ref of q.sourceRefs) {
+        expect(new URL(ref.url).protocol).toBe('https:');
+        expect(ref.title, q.prompt).not.toMatch(/\b(?:undefined|null|TODO|TBD)\b/i);
+      }
     }
   });
 
@@ -212,5 +233,98 @@ describe('source question bank integrity (not publication approval)', () => {
       ).toBe(true);
       expect(q?.wrongAnswerNotes?.length, name).toBeGreaterThan(0);
     }
+  });
+
+  it('keeps the reasoning pilot concise, independently sourced and explicit about each distractor', () => {
+    // Source positions are retained during this editorial pass; a new generation
+    // version must not silently remove an earlier strengthened item from coverage.
+    const pilotIndices = [18, 59, 63, 106, 180, 218, 245, 280, 307, 308, 309, 310];
+    const labels = ['①', '②', '③', '④', '⑤'];
+    for (const index of pilotIndices) {
+      const q = bank[index - 1];
+      if (!q) throw new Error(`Missing pilot question #${index}`);
+      expect(q.prompt.length, q.prompt).toBeLessThanOrEqual(220);
+      for (const choice of q.choices) expect(choice.length, q.prompt).toBeLessThanOrEqual(32);
+      expect(q.ability, q.prompt).not.toBe('fact');
+      expect(q.rightsType, q.prompt).toBe('self_created');
+      expect(q.rightsNote?.trim().length, q.prompt).toBeGreaterThan(0);
+      expect(
+        q.sourceRefs.some((ref) =>
+          ['contents.history.go.kr', 'encykorea.aks.ac.kr', 'db.history.go.kr'].includes(
+            new URL(ref.url).hostname,
+          ),
+        ),
+        q.prompt,
+      ).toBe(true);
+      expect(q.wrongAnswerNotes, q.prompt).toHaveLength(4);
+      expect(q.wrongAnswerNotes?.map((note) => note[0]).sort(), q.prompt).toEqual(
+        labels.filter((_label, index) => index !== q.correctIndex).sort(),
+      );
+    }
+  });
+
+  it.each([
+    ['성왕 때의 국가 재정비', '(나) → (다) → (가)', ['538', '551', '554']],
+    ['고려가 거란의 여러 차례', '(나) → (다) → (가)', ['1차', '2차', '3차']],
+    ['주권을 단계적으로 침해', '(다) → (나) → (가)', ['1905', '1906', '1907']],
+    ['임시정부가 지도체제를', '(나) → (다) → (가)', ['1925', '1927', '1940']],
+  ])('preserves the historical sequence and rationale for %s', (phrase, answer, clues) => {
+    const q = findQuestion(phrase);
+    expect(q.ability).toBe('chronology');
+    expect(q.choices[q.correctIndex]).toBe(answer);
+    for (const clue of clues) expect(q.explanation).toContain(clue);
+  });
+
+  it('does not swap eligibility with collection or soil quality with annual harvest', () => {
+    const collection = findQuestion('1466년 직전법은');
+    expect(collection.choices[collection.correctIndex]).toBe(
+      '직전법은 지급 대상을, 관수관급제는 징수 주체를 바꿨다',
+    );
+    const taxation = findQuestion('세종의 공법을 적용');
+    expect(taxation.prompt).toContain('학습용 가상 상황');
+    expect(taxation.choices[taxation.correctIndex]).toBe('(가) 연분 9등 / (나) 전분 6등');
+  });
+
+  it('distinguishes central paid troops from locally recruited mixed-status troops', () => {
+    const q = findQuestion('훈련도감과 속오군');
+    expect(q.choices[q.correctIndex]).toBe('훈련도감은 중앙 급료병, 속오군은 지방 혼성군이었다');
+    expect(q.prompt).toContain('창설 당시');
+    expect(q.explanation).toContain('양인과 공·사천인');
+  });
+
+  it('distinguishes Guju fortress commanders rather than denying its Mongol resistance', () => {
+    const q = findQuestion('김윤후가 몽골군');
+    expect(q.choices[q.correctIndex]).toBe('처인성·충주성');
+    expect(q.explanation).toContain('귀주성도 대몽 항전');
+    expect(q.explanation).toContain('1231년');
+    expect(q.explanation).toContain('박서');
+    expect(q.wrongAnswerNotes?.join(' ')).not.toContain('귀주와 진포는 각각 거란');
+    expect(q.sourceRefs.map((ref) => ref.url)).toContain(
+      'https://encykorea.aks.ac.kr/Article/E0070234',
+    );
+  });
+
+  it('teaches Yeojeonron as distribution of produce, not land, by labor contribution', () => {
+    const q = findQuestion('광무개혁의 양전');
+    const communalChoice = q.choices.find((choice) => choice.includes('공동 경작'));
+    expect(communalChoice).toContain('수확물');
+    expect(communalChoice).not.toContain('토지를 나눴다');
+    expect(q.wrongAnswerNotes?.join(' ')).toMatch(/수확물.*여전론/);
+  });
+
+  it('bounds strategic industry classification without implying the end of light-industry support', () => {
+    const q = findQuestion('1973년 중화학');
+    expect(q.prompt).toContain('6대 전략산업');
+    expect(q.explanation).toMatch(/경공업 지원.*종료.*아닙니다/);
+  });
+
+  it('keeps the mnemonic aligned with the revised independence-movement chronology', () => {
+    const q = bank[274];
+    if (!q) throw new Error('Missing movement chronology question #275');
+    for (const clue of ['1919', '3·1', '1926', '6·10', '1927', '신간회', '1929', '광주학생']) {
+      expect(q.memoryKeyword).toContain(clue);
+    }
+    expect(q.memoryKeyword).not.toMatch(/청산리|광복군/);
+    expect(q.choices[q.correctIndex]).toBe('(나) → (다) → (라) → (가)');
   });
 });

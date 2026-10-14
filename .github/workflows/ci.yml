@@ -24,6 +24,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: 비공개 문항·운영 기록 추적 금지
+        run: |
+          if [ -n "$(git ls-files -- content assets/outreach)" ]; then
+            echo "::error::content/ 및 assets/outreach/는 공개 저장소에 포함할 수 없습니다."
+            exit 1
+          fi
+
       - uses: pnpm/action-setup@v4
 
       - uses: actions/setup-node@v4

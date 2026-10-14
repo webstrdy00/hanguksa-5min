@@ -33,6 +33,7 @@
     "drizzle.config.ts",
     "drizzle.journal.config.ts",
     "vitest.config.ts",
+    "vitest.content.config.ts",
     "vitest.setup.ts",
     "vitest.db.config.ts",
     "vitest.db.setup.ts",

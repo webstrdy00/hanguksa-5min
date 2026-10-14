@@ -1,27 +1,23 @@
-import { readFileSync } from 'node:fs';
 import type postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from '../app.ts';
 import { issueAdminToken } from '../auth/admin-token.ts';
 import type { IdentityProvider, VerificationOutcome } from '../auth/identity-provider.ts';
 import { createTestClient, insertAdmin, insertQuestion, truncateAll } from '../db/test-helpers.ts';
+import { ERAS, TOPICS, ABILITIES } from '../db/schema/enums.ts';
 import type { AppInstance } from '../http/types.ts';
 import type { AnswerResult, CompleteResult, SessionView } from '../services/study-session.ts';
 
 /**
  * Disposable DB mechanics only, NOT historical review or production approval.
- * Prior content is a version-controlled, identity-free content fixture.
+ * Before/after content is synthetic MOCK data, never a production snapshot.
  * Private review and operational records are not required to run this test.
  * IDs, users, approval identities, and pre-existing drafts are test-only MOCK data.
- * The JSON indices are zero-based; canonical IDs are generated in this test DB,
- * not inferred from local file positions or copied from production.
+ * Canonical IDs are generated in this test DB, never copied from production.
  */
-const PRIORITY_INDICES = [
-  49, 50, 56, 90, 123, 128, 178, 194, 201, 213, 222, 227, 261, 282,
-] as const;
 const MOCK_NOW = '2026-10-06T03:00:00.000Z';
 
-// Preserve the current source payload, including optional CMS content metadata.
+// Exercise optional CMS metadata as well as the required content fields.
 type LocalContent = {
   era: string;
   topic: string;
@@ -40,23 +36,36 @@ type LocalContent = {
   aiGenerationMeta?: { model: string; promptVersion: string; generatedAt: string };
 };
 
-const bank = JSON.parse(
-  readFileSync(new URL('../../../content/all-300.json', import.meta.url), 'utf8'),
-) as LocalContent[];
-const publishedBefore = JSON.parse(
-  readFileSync(new URL('./fixtures/priority-revision-before.json', import.meta.url), 'utf8'),
-) as LocalContent[];
-if (publishedBefore.length !== PRIORITY_INDICES.length) {
-  throw new Error(
-    'The identity-free published snapshot must contain all 14 targets in priority order',
-  );
+function mockContent(index: number, revision: number): LocalContent {
+  return {
+    era: ERAS[index % ERAS.length]!,
+    topic: TOPICS[index % TOPICS.length]!,
+    ability: ABILITIES[index % ABILITIES.length]!,
+    difficulty: (index % 3) + 1,
+    prompt: `MOCK rollout question ${index}, revision ${revision}`,
+    choices: Array.from({ length: 5 }, (_, choice) => `MOCK option ${index}-${revision}-${choice}`),
+    correctIndex: (index + revision) % 5,
+    explanation: `MOCK explanation ${index}, revision ${revision}; not historical content`,
+    sourceRefs: [{ title: 'MOCK source', url: 'https://example.test/mock-source' }],
+    sourceAccessedAt: '2026-10-06',
+    rightsType: 'self_created',
+    ...(index % 2 === 0
+      ? {
+          wrongAnswerNotes: ['MOCK distractor explanation'],
+          memoryKeyword: `MOCK keyword ${revision}`,
+          rightsNote: 'MOCK test fixture only',
+          aiGenerationMeta: {
+            model: 'MOCK',
+            promptVersion: `MOCK-${revision}`,
+            generatedAt: MOCK_NOW,
+          },
+        }
+      : {}),
+  };
 }
-const priorityContent = PRIORITY_INDICES.map((index, position) => {
-  const content = bank[index];
-  const prior = publishedBefore[position];
-  if (content == null || prior == null) {
-    throw new Error(`Missing priority before/after content at index ${index}`);
-  }
+const priorityContent = Array.from({ length: 14 }, (_, index) => {
+  const content = mockContent(index, 3);
+  const prior = mockContent(index, 1);
   return { index, content, prior };
 });
 
@@ -366,9 +375,9 @@ describe('priority revision staged rollout (test-only MOCK approvals, not releas
     expect(completedAnswersBefore).toHaveLength(5);
     expect(inProgressAnswersBefore).toHaveLength(1);
     expect(pinnedBefore).toHaveLength(10);
-    expect(priorBefore).toHaveLength(PRIORITY_INDICES.length);
+    expect(priorBefore).toHaveLength(priorityContent.length);
     expect(priorBefore.every((row) => row.status === 'published')).toBe(true);
-    expect(draftsBefore).toHaveLength(PRIORITY_INDICES.length);
+    expect(draftsBefore).toHaveLength(priorityContent.length);
     expect(draftsBefore.every((row) => row.status === 'draft')).toBe(true);
 
     // Stage 1: create drafts under the SAME canonical IDs; retry every POST unchanged.
