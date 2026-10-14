@@ -79,6 +79,7 @@ Thumbs.db
 assets/console/
 .factcache/
 factcheck-report.json
+assets/outreach/
 
 # 배포용 시크릿 임시 파일. 절대 커밋 금지.
 railway-secrets.txt
