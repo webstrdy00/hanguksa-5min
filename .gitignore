@@ -100,3 +100,13 @@ backend/.admtok.txt
 
 # 과거 로컬 복원 실험은 보관만 하고 커밋 대상에서 제외한다.
 /scripts/rehearse-deletion-restore.mjs
+
+# 비공개 승인 기록에 결합된 과거 발행 도구와 해당 테스트.
+/scripts/publish-reviewed-content.mjs
+/scripts/publish-reviewed-content.test.mjs
+/scripts/publish-expansion-content.mjs
+/scripts/publish-expansion-content.test.mjs
+
+# 특정 검증 서비스용 로컬 운영 점검 도구.
+/scripts/verify-aiven-database.mjs
+/scripts/verify-aiven-database.test.mjs
