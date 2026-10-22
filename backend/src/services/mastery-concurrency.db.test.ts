@@ -1,6 +1,8 @@
+import { spawn } from 'node:child_process';
+import process from 'node:process';
 import { eq } from 'drizzle-orm';
 import type postgres from 'postgres';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '../db/client.ts';
 import { questionRevisions } from '../db/schema/content.ts';
 import {
@@ -13,8 +15,15 @@ import {
   insertUser,
   truncateAll,
 } from '../db/test-helpers.ts';
+import { logger } from '../observability/logger.ts';
 import { requestDeletion, runPendingDeletionJobs } from './deletion.ts';
-import { enqueueMasteryRecalc, runNextMasteryRecalcJob } from './mastery-jobs.ts';
+import {
+  enqueueMasteryRecalc,
+  getMasteryQueuePending,
+  retryFailedMasteryRecalcJobs,
+  runNextMasteryRecalcJob,
+  runPendingMasteryRecalcJobs,
+} from './mastery-jobs.ts';
 import { loadProgress, recalculateMastery } from './progress.ts';
 import { submitAnswer } from './study-session.ts';
 
@@ -119,7 +128,7 @@ async function prepareSnapshot(validAnswers: number): Promise<string> {
   return jobId;
 }
 
-async function installBarrier(table: 'mastery' | 'answers'): Promise<void> {
+async function installBarrier(table: 'mastery' | 'answers' | 'mastery_recalc_jobs'): Promise<void> {
   await sql.unsafe(`
     create function issue11_pause_write() returns trigger language plpgsql as $$
     begin
@@ -130,8 +139,25 @@ async function installBarrier(table: 'mastery' | 'answers'): Promise<void> {
   `);
   await sql.unsafe(`
     create trigger issue11_pause_write
-    ${table === 'mastery' ? 'before delete' : 'after insert'} on ${table}
-    for each row execute function issue11_pause_write()
+    ${table === 'mastery' ? 'before delete' : table === 'answers' ? 'after insert' : 'before update'}
+    on ${table} for each row
+    ${table === 'mastery_recalc_jobs' ? "when (new.status = 'completed')" : ''}
+    execute function issue11_pause_write()
+  `);
+}
+
+async function installFailure(table: 'mastery' | 'mastery_recalc_jobs'): Promise<void> {
+  await sql.unsafe(`
+    create function issue11_fail_write() returns trigger language plpgsql as $$
+    begin
+      raise exception 'sensitive fixture: anonKey=never-log-this; select * from answers';
+    end $$
+  `);
+  await sql.unsafe(`
+    create trigger issue11_fail_write
+    ${table === 'mastery' ? 'before delete' : 'before update'} on ${table}
+    for each row ${table === 'mastery_recalc_jobs' ? "when (new.status = 'completed')" : ''}
+    execute function issue11_fail_write()
   `);
 }
 
@@ -161,7 +187,11 @@ async function holdLock(
   return { pid: await ready, release, done };
 }
 
-async function blockedBy(blockerPid: number, queryFragment: string): Promise<number> {
+async function blockedBy(
+  blockerPid: number,
+  queryFragment: string,
+  timeout = 5_000,
+): Promise<number> {
   let pid = 0;
   await expect
     .poll(
@@ -176,7 +206,7 @@ async function blockedBy(blockerPid: number, queryFragment: string): Promise<num
         pid = rows[0]?.pid ?? 0;
         return pid;
       },
-      { timeout: 5_000, interval: 10 },
+      { timeout, interval: 10 },
     )
     .toBeGreaterThan(0);
   return pid;
@@ -221,7 +251,258 @@ beforeEach(async () => {
 afterEach(async () => {
   await sql`drop trigger if exists issue11_pause_write on mastery`;
   await sql`drop trigger if exists issue11_pause_write on answers`;
+  await sql`drop trigger if exists issue11_pause_write on mastery_recalc_jobs`;
   await sql`drop function if exists issue11_pause_write()`;
+  await sql`drop trigger if exists issue11_fail_write on mastery`;
+  await sql`drop trigger if exists issue11_fail_write on mastery_recalc_jobs`;
+  await sql`drop function if exists issue11_fail_write()`;
+});
+
+describe('mastery queue: durable claims and crash recovery', () => {
+  it('signals pending/running work but leaves failed work for explicit retry', async () => {
+    expect(await getMasteryQueuePending()).toBe(false);
+    const jobId = await enqueueMasteryRecalc(db, {
+      questionRevisionId: pool[0]!.revisionId,
+      reason: 'manual',
+    });
+    expect(jobId).not.toBeNull();
+    expect(await getMasteryQueuePending()).toBe(true);
+    await sql`update mastery_recalc_jobs set status = 'running' where id = ${jobId}`;
+    expect(await getMasteryQueuePending()).toBe(true);
+    await sql`
+      update mastery_recalc_jobs set status = 'failed', last_error = 'MASTERY_RECALC_FAILED'
+      where id = ${jobId}
+    `;
+    expect(await getMasteryQueuePending()).toBe(false);
+    expect(await runPendingMasteryRecalcJobs()).toEqual([]);
+    const [failed] = await sql<{ status: string }[]>`
+      select status from mastery_recalc_jobs where id = ${jobId}
+    `;
+    expect(failed?.status).toBe('failed');
+    expect(await retryFailedMasteryRecalcJobs()).toBe(1);
+    expect(await getMasteryQueuePending()).toBe(true);
+    expect(await runPendingMasteryRecalcJobs(1)).toEqual([
+      { jobId, processedUsers: 0, status: 'completed' },
+    ]);
+    expect(await getMasteryQueuePending()).toBe(false);
+    expect(await retryFailedMasteryRecalcJobs()).toBe(0);
+    await assertCompleted(jobId!, 0);
+  });
+
+  it('orders pending and legacy running candidates by created_at then id', async () => {
+    const jobIds: string[] = [];
+    for (const entry of pool.slice(0, 3)) {
+      const jobId = await enqueueMasteryRecalc(db, {
+        questionRevisionId: entry.revisionId,
+        reason: 'manual',
+      });
+      if (jobId == null) throw new Error('Missing ordering job');
+      jobIds.push(jobId);
+    }
+    const [first, second, older] = jobIds.sort();
+    await sql`update mastery_recalc_jobs set created_at = ${NOW}`;
+    await sql`
+      update mastery_recalc_jobs set created_at = ${new Date(NOW.getTime() - 1_000)}
+      where id = ${older!}
+    `;
+    await sql`update mastery_recalc_jobs set status = 'running' where id = ${first!}`;
+    expect(await runPendingMasteryRecalcJobs(2)).toEqual([
+      { jobId: older, processedUsers: 0, status: 'completed' },
+      { jobId: first, processedUsers: 0, status: 'completed' },
+    ]);
+    expect(await getMasteryQueuePending()).toBe(true);
+    expect(await runPendingMasteryRecalcJobs()).toEqual([
+      { jobId: second, processedUsers: 0, status: 'completed' },
+    ]);
+    expect(await getMasteryQueuePending()).toBe(false);
+  });
+
+  for (const initialStatus of ['pending', 'running'] as const) {
+    it(`${initialStatus}: concurrent workers skip a locked job without stealing or duplicating it`, async () => {
+      const jobId = await prepareSnapshot(1);
+      await sql`
+        update mastery_recalc_jobs set status = ${initialStatus},
+          created_at = ${new Date(NOW.getTime() - 1_000)}, total_users = 99, processed_users = 99,
+          last_error = 'legacy diagnostic'
+        where id = ${jobId}
+      `;
+      const nextJobId = await enqueueMasteryRecalc(db, {
+        questionRevisionId: pool[4]!.revisionId,
+        reason: 'manual',
+      });
+      if (nextJobId == null) throw new Error('Missing competing job');
+      await sql`update mastery_recalc_jobs set created_at = ${NOW} where id = ${nextJobId}`;
+      await installBarrier('mastery');
+      const gate = await holdLock();
+      const pending: Promise<unknown>[] = [];
+      try {
+        const job = track(pending, runNextMasteryRecalcJob(NOW));
+        await blockedBy(gate.pid, 'delete from "mastery"');
+        // The claim has not committed; the lock, not a running timestamp, excludes contenders.
+        const [visible] = await sql<{ status: string; processed_users: number }[]>`
+          select status, processed_users from mastery_recalc_jobs where id = ${jobId}
+        `;
+        expect(visible).toEqual({ status: initialStatus, processed_users: 99 });
+        expect(await getMasteryQueuePending()).toBe(true);
+        expect(await runNextMasteryRecalcJob(NOW)).toEqual({
+          jobId: nextJobId,
+          processedUsers: 0,
+          status: 'completed',
+        });
+        expect(await runNextMasteryRecalcJob(NOW)).toBeNull();
+        // Locked work must keep the scheduler active even when no candidate can be claimed.
+        expect(await getMasteryQueuePending()).toBe(true);
+        gate.release();
+        await gate.done;
+        expect(await job).toEqual({ jobId, processedUsers: 1, status: 'completed' });
+        await assertCompleted(jobId);
+        await assertCompleted(nextJobId, 0);
+        expect(await getMasteryQueuePending()).toBe(false);
+        await assertConsistent(1);
+      } finally {
+        gate.release();
+        await gate.done;
+        await Promise.allSettled(pending);
+      }
+    });
+
+    it(`${initialStatus}: killing the worker process rolls back its claim and safely replays committed recalc`, async () => {
+      const jobId = await prepareSnapshot(1);
+      await sql`
+        update mastery_recalc_jobs set status = ${initialStatus}, total_users = 99,
+          processed_users = 99, last_error = 'legacy diagnostic'
+        where id = ${jobId}
+      `;
+      await installBarrier('mastery_recalc_jobs');
+      const gate = await holdLock();
+      const pending: Promise<unknown>[] = [];
+      // Run the real service in an independent process. Killing a database backend instead
+      // lets postgres.js execute its disconnect cleanup and hits its pending-write race.
+      // SIGKILL prevents any application cleanup or COMMIT from masking crash behavior.
+      const worker = spawn(
+        process.execPath,
+        [
+          '--input-type=module',
+          '--eval',
+          `
+            const { runNextMasteryRecalcJob } = await import(process.argv[1]);
+            const { closeDb } = await import(process.argv[2]);
+            await runNextMasteryRecalcJob(new Date(process.argv[3]));
+            await closeDb();
+          `,
+          new URL('./mastery-jobs.ts', import.meta.url).href,
+          new URL('../db/client.ts', import.meta.url).href,
+          NOW.toISOString(),
+        ],
+        { env: process.env, stdio: ['ignore', 'ignore', 'pipe'] },
+      );
+      let stderrBytes = 0;
+      worker.stderr.on('data', (chunk: Buffer) => {
+        stderrBytes += chunk.length;
+      });
+      const closed = track(
+        pending,
+        new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+          worker.once('error', reject);
+          worker.once('close', (code, signal) => resolve({ code, signal }));
+        }),
+      );
+      try {
+        const workerPid = await blockedBy(gate.pid, 'update "mastery_recalc_jobs"', 15_000);
+        // The separate user transaction has committed before the job completion write.
+        await assertConsistent(1);
+        expect(await runNextMasteryRecalcJob(NOW)).toBeNull();
+        expect(worker.kill('SIGKILL')).toBe(true);
+        expect(await closed).toEqual({ code: null, signal: 'SIGKILL' });
+        // Unexpected child warnings/errors still fail the test without printing SQL/secrets.
+        expect(stderrBytes).toBe(0);
+        // PostgreSQL may notice a closed socket only after its advisory-lock wait ends.
+        // Release only after the process is dead: it can no longer send the job COMMIT.
+        gate.release();
+        await gate.done;
+        await expect
+          .poll(
+            async () => {
+              const [backend] = await sql<{ present: boolean }[]>`
+                select exists (select 1 from pg_stat_activity where pid = ${workerPid}) as present
+              `;
+              return backend?.present;
+            },
+            { timeout: 5_000, interval: 10 },
+          )
+          .toBe(false);
+        const [rolledBack] = await sql<
+          { status: string; total_users: number; processed_users: number; last_error: string }[]
+        >`
+          select status, total_users, processed_users, last_error
+          from mastery_recalc_jobs where id = ${jobId}
+        `;
+        expect(rolledBack).toEqual({
+          status: initialStatus,
+          total_users: 99,
+          processed_users: 99,
+          last_error: 'legacy diagnostic',
+        });
+        expect(await getMasteryQueuePending()).toBe(true);
+        expect(await runNextMasteryRecalcJob(NOW)).toEqual({
+          jobId,
+          processedUsers: 1,
+          status: 'completed',
+        });
+        await assertCompleted(jobId);
+        await assertConsistent(1);
+        expect(await getMasteryQueuePending()).toBe(false);
+      } finally {
+        worker.kill('SIGKILL');
+        await Promise.allSettled(pending);
+        gate.release();
+        await gate.done;
+      }
+    }, 30_000);
+  }
+
+  it.each(['mastery', 'mastery_recalc_jobs'] as const)(
+    '%s failure stores/logs only a fixed code and requires explicit retry',
+    async (table) => {
+      const jobId = await prepareSnapshot(1);
+      await installFailure(table);
+      const log = vi.spyOn(logger, 'error');
+      expect(await runNextMasteryRecalcJob(NOW)).toEqual({
+        jobId,
+        processedUsers: 0,
+        status: 'failed',
+      });
+      const [failed] = await sql<
+        { status: string; processed_users: number; total_users: number; last_error: string }[]
+      >`
+        select status, processed_users, total_users, last_error
+        from mastery_recalc_jobs where id = ${jobId}
+      `;
+      expect(failed).toEqual({
+        status: 'failed',
+        processed_users: 0,
+        total_users: 0,
+        last_error: 'MASTERY_RECALC_FAILED',
+      });
+      expect(log.mock.calls).toEqual([
+        [{ jobId, code: 'MASTERY_RECALC_FAILED' }, 'mastery_recalc_job_failed'],
+      ]);
+      expect(await getMasteryQueuePending()).toBe(false);
+      expect(await runPendingMasteryRecalcJobs()).toEqual([]);
+      if (table === 'mastery_recalc_jobs') await assertConsistent(1);
+      await sql.unsafe(`drop trigger issue11_fail_write on ${table}`);
+      expect(await retryFailedMasteryRecalcJobs()).toBe(1);
+      expect(await getMasteryQueuePending()).toBe(true);
+      expect(await runNextMasteryRecalcJob(NOW)).toEqual({
+        jobId,
+        processedUsers: 1,
+        status: 'completed',
+      });
+      await assertCompleted(jobId);
+      await assertConsistent(1);
+      expect(await getMasteryQueuePending()).toBe(false);
+    },
+  );
 });
 
 const snapshotCases = [
@@ -472,7 +753,7 @@ describe('issue11: void and deletion boundaries', () => {
   });
 
   it('delete first: skip a deleted user before touching rows the deletion worker removes', async () => {
-    await prepareSnapshot(1);
+    const jobId = await prepareSnapshot(1);
     await requestDeletion(userId, NOW);
     const before = await sql`select * from mastery where user_id = ${userId}`;
     expect(await recalculateMastery(userId, NOW)).toEqual([]);
@@ -487,6 +768,13 @@ describe('issue11: void and deletion boundaries', () => {
       await blockedBy(gate.pid, 'delete from "mastery"');
       // Acquiring the user lock is safe only if the deleted guard returns before any mastery write.
       expect(await recalculateMastery(userId, NOW)).toEqual([]);
+      // Plain affected-user reads must not lock rows held by the deletion transaction.
+      expect(await runNextMasteryRecalcJob(NOW)).toEqual({
+        jobId,
+        status: 'completed',
+        processedUsers: 1,
+      });
+      await assertCompleted(jobId);
       await expect(
         submitAnswer(userId, sessionId, pool[2]!.revisionId, 0, NOW),
       ).rejects.toMatchObject({

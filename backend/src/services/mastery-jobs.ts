@@ -1,10 +1,12 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { db } from '../db/client.ts';
 import type { RecalcReason } from '../db/schema/enums.ts';
 import { answers, studySessions } from '../db/schema/learning.ts';
 import { masteryRecalcJobs } from '../db/schema/ops.ts';
 import { logger } from '../observability/logger.ts';
 import { recalculateMastery } from './progress.ts';
+
+type MasteryJobTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**
  * 숙련도 재계산 작업 (07 §9, 09 §5).
@@ -19,7 +21,7 @@ import { recalculateMastery } from './progress.ts';
 
 /** void 처리 시 호출한다. 같은 트랜잭션에서 작업을 남긴다. */
 export async function enqueueMasteryRecalc(
-  executor: Parameters<Parameters<typeof db.transaction>[0]>[0] | typeof db,
+  executor: MasteryJobTransaction | typeof db,
   params: { questionRevisionId: string; reason: RecalcReason; requestedBy?: string },
 ): Promise<string | null> {
   const [job] = await executor
@@ -42,80 +44,125 @@ export interface JobRunResult {
 }
 
 /** 해당 revision 을 실제로 푼 사용자 목록. 재계산 대상이다. */
-async function findAffectedUsers(questionRevisionId: string): Promise<string[]> {
-  const rows = await db
+async function findAffectedUsers(
+  tx: MasteryJobTransaction,
+  questionRevisionId: string,
+): Promise<string[]> {
+  const rows = await tx
     .selectDistinct({ userId: studySessions.userId })
     .from(answers)
     .innerJoin(studySessions, eq(studySessions.id, answers.sessionId))
-    .where(eq(answers.questionRevisionId, questionRevisionId));
+    .where(eq(answers.questionRevisionId, questionRevisionId))
+    .orderBy(studySessions.userId);
 
   return rows.map((row) => row.userId);
 }
 
+/** 잠긴 작업도 포함한다. failed 는 운영자가 명시적으로 재시도할 때만 처리한다. */
+export async function getMasteryQueuePending(): Promise<boolean> {
+  const [job] = await db
+    .select({ id: masteryRecalcJobs.id })
+    .from(masteryRecalcJobs)
+    .where(inArray(masteryRecalcJobs.status, ['pending', 'running']))
+    .limit(1);
+
+  return job != null;
+}
+
 /**
- * 대기 중인 작업을 하나 처리한다.
+ * 대기 중이거나 이전 워커가 남긴 running 작업을 하나 처리한다.
  *
- * 여러 워커가 동시에 돌아도 하나만 집도록 status 조건부 UPDATE 로 선점한다.
+ * 선점부터 완료까지 같은 트랜잭션의 행 잠금을 유지한다. 프로세스가 죽으면
+ * 선점도 롤백되므로 다른 워커/CLI 가 다시 처리할 수 있다.
+ * 배포 시 이 잠금 규약을 쓰지 않는 구버전 워커를 반드시 먼저 중지해야 한다.
  */
 export async function runNextMasteryRecalcJob(now = new Date()): Promise<JobRunResult | null> {
-  const [claimed] = await db
-    .update(masteryRecalcJobs)
-    .set({ status: 'running', startedAt: now, updatedAt: now })
-    .where(
-      eq(
-        masteryRecalcJobs.id,
-        sql`(select id from mastery_recalc_jobs where status = 'pending' order by created_at limit 1 for update skip locked)`,
-      ),
-    )
-    .returning({
-      id: masteryRecalcJobs.id,
-      questionRevisionId: masteryRecalcJobs.questionRevisionId,
-    });
+  const result = await db.transaction<JobRunResult | null>(async (tx) => {
+    const [claimed] = await tx
+      .select({
+        id: masteryRecalcJobs.id,
+        questionRevisionId: masteryRecalcJobs.questionRevisionId,
+      })
+      .from(masteryRecalcJobs)
+      .where(inArray(masteryRecalcJobs.status, ['pending', 'running']))
+      .orderBy(masteryRecalcJobs.createdAt, masteryRecalcJobs.id)
+      .limit(1)
+      .for('update', { skipLocked: true });
 
-  if (claimed == null) return null;
+    if (claimed == null) return null;
 
-  try {
-    const userIds = await findAffectedUsers(claimed.questionRevisionId);
-
-    await db
-      .update(masteryRecalcJobs)
-      .set({ totalUsers: userIds.length, updatedAt: now })
-      .where(eq(masteryRecalcJobs.id, claimed.id));
-
-    let processed = 0;
-    for (const userId of userIds) {
-      await recalculateMastery(userId, now);
-      processed += 1;
-
-      // 중간에 죽어도 어디까지 했는지 남긴다. 재실행은 멱등하므로 처음부터 돌려도 안전하다.
-      await db
-        .update(masteryRecalcJobs)
-        .set({ processedUsers: processed, updatedAt: new Date() })
-        .where(eq(masteryRecalcJobs.id, claimed.id));
-    }
-
-    await db
-      .update(masteryRecalcJobs)
-      .set({ status: 'completed', completedAt: new Date(), updatedAt: new Date() })
-      .where(eq(masteryRecalcJobs.id, claimed.id));
-
-    logger.info({ jobId: claimed.id, processedUsers: processed }, 'mastery_recalc_job_completed');
-
-    return { jobId: claimed.id, processedUsers: processed, status: 'completed' };
-  } catch (error) {
-    await db
+    await tx
       .update(masteryRecalcJobs)
       .set({
-        status: 'failed',
-        lastError: error instanceof Error ? error.message.slice(0, 500) : 'unknown',
-        updatedAt: new Date(),
+        status: 'running',
+        startedAt: now,
+        completedAt: null,
+        totalUsers: 0,
+        processedUsers: 0,
+        lastError: null,
+        updatedAt: now,
       })
       .where(eq(masteryRecalcJobs.id, claimed.id));
 
-    logger.error({ err: error, jobId: claimed.id }, 'mastery_recalc_job_failed');
+    try {
+      // SQL 실패도 failed 로 기록할 수 있도록 savepoint 만 되돌린다.
+      // 선점 잠금은 savepoint 밖에 있어 실패 처리 중에도 다른 워커가 가져가지 못한다.
+      const processed = await tx.transaction(async (processingTx) => {
+        const userIds = await findAffectedUsers(processingTx, claimed.questionRevisionId);
 
-    return { jobId: claimed.id, processedUsers: 0, status: 'failed' };
+        await processingTx
+          .update(masteryRecalcJobs)
+          .set({ totalUsers: userIds.length, updatedAt: now })
+          .where(eq(masteryRecalcJobs.id, claimed.id));
+
+        let processedUsers = 0;
+        for (const userId of userIds) {
+          // 바깥 트랜잭션은 작업 행만 잠근다. 사용자/학습 행까지 잠그면 별도 연결의
+          // 재계산/삭제와 순환 대기하므로 기존 원장 → 사용자 잠금 순서를 유지한다.
+          // 사용자별 재계산은 따로 커밋된다. 작업 커밋 전 죽으면 이미 처리한 사용자도
+          // 다시 계산하지만 답안 이력으로 전량 교체하므로 멱등하다.
+          await recalculateMastery(userId, now);
+          processedUsers += 1;
+
+          await processingTx
+            .update(masteryRecalcJobs)
+            .set({ processedUsers, updatedAt: new Date() })
+            .where(eq(masteryRecalcJobs.id, claimed.id));
+        }
+
+        const completedAt = new Date();
+        await processingTx
+          .update(masteryRecalcJobs)
+          .set({ status: 'completed', completedAt, updatedAt: completedAt })
+          .where(eq(masteryRecalcJobs.id, claimed.id));
+
+        return processedUsers;
+      });
+
+      return { jobId: claimed.id, processedUsers: processed, status: 'completed' };
+    } catch {
+      await tx
+        .update(masteryRecalcJobs)
+        .set({ status: 'failed', lastError: 'MASTERY_RECALC_FAILED', updatedAt: new Date() })
+        .where(eq(masteryRecalcJobs.id, claimed.id));
+
+      return { jobId: claimed.id, processedUsers: 0, status: 'failed' };
+    }
+  });
+
+  if (result?.status === 'completed') {
+    logger.info(
+      { jobId: result.jobId, processedUsers: result.processedUsers },
+      'mastery_recalc_job_completed',
+    );
+  } else if (result?.status === 'failed') {
+    logger.error(
+      { jobId: result.jobId, code: 'MASTERY_RECALC_FAILED' },
+      'mastery_recalc_job_failed',
+    );
   }
+
+  return result;
 }
 
 /** 대기 중인 작업을 모두 처리한다. 배치 진입점. */

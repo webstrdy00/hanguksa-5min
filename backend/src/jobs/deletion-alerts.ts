@@ -1,5 +1,8 @@
-type QueueHealth = { failed: number; overdue: number };
+type QueueHealth = { failed: number; overdue: number; pending?: number };
 type AlertState = QueueHealth & { unavailable: boolean };
+type DeletionAlerts = ((state: AlertState) => Promise<void>) & {
+  hasPendingDelivery: () => boolean;
+};
 
 /**
  * 건수만 전송한다. 사용자/작업 ID, 오류 원문, 웹훅은 메시지와 로그에 넣지 않는다.
@@ -11,18 +14,18 @@ export function createDeletionAlerts(
   onDeliveryFailure: () => void,
   send: typeof fetch = fetch,
   clock: () => number = Date.now,
-): (state: AlertState) => Promise<void> {
+): DeletionAlerts {
   let active = false;
   let undelivered = false;
   let lastSent = -Infinity;
   let retryAfter = -Infinity;
 
-  return async (state) => {
+  const notify = async (state: AlertState): Promise<void> => {
     if (webhookUrl == null) return;
     const now = clock();
     const unhealthy = state.unavailable || state.failed > 0 || state.overdue > 0;
     if (now < retryAfter || (!unhealthy && !active && !undelivered)) return;
-    if (unhealthy && active && now - lastSent < 30 * 60_000) return;
+    if (unhealthy && active && !undelivered && now - lastSent < 30 * 60_000) return;
 
     const content = [
       `[한능검 5분 / ${environment}] ${unhealthy ? '삭제 작업 확인 필요' : '삭제 작업 정상화'}`,
@@ -53,6 +56,8 @@ export function createDeletionAlerts(
       onDeliveryFailure();
     }
   };
+
+  return Object.assign(notify, { hasPendingDelivery: () => undelivered });
 }
 
 /** 처리 전 장기 대기와 처리 후 실패를 확인하며 전송 장애가 삭제를 막지 않는다. */
@@ -60,6 +65,7 @@ export function createMonitoredDeletionBatch(
   run: () => Promise<number>,
   inspect: () => Promise<QueueHealth>,
   notify: (state: AlertState) => Promise<void>,
+  onHealth?: (health: QueueHealth) => void,
 ): () => Promise<number> {
   return async () => {
     try {
@@ -68,7 +74,9 @@ export function createMonitoredDeletionBatch(
         await notify({ ...before, unavailable: false });
       }
       const processed = await run();
-      await notify({ ...(await inspect()), unavailable: false });
+      const after = await inspect();
+      onHealth?.(after);
+      await notify({ ...after, unavailable: false });
       return processed;
     } catch (error) {
       await notify({ failed: 0, overdue: 0, unavailable: true });

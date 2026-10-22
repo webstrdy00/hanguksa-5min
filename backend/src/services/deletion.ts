@@ -177,16 +177,31 @@ export async function runPendingDeletionJobs(limit = 50, now = new Date()): Prom
 export async function getDeletionQueueHealth(now = new Date()): Promise<{
   failed: number;
   overdue: number;
+  pending: number;
 }> {
   const cutoff = new Date(now.getTime() - 15 * 60_000);
   const [row] = await db
     .select({
       failed: sql<number>`count(*) filter (where ${deletionJobs.status} = 'failed')::integer`,
       overdue: sql<number>`count(*) filter (where ${deletionJobs.requestedAt} <= ${cutoff.toISOString()}::timestamptz)::integer`,
+      pending: sql<number>`count(*)::integer`,
     })
     .from(deletionJobs)
     .where(inArray(deletionJobs.status, ['requested', 'failed', 'in_progress']));
-  return { failed: row?.failed ?? 0, overdue: row?.overdue ?? 0 };
+  if (
+    row == null ||
+    !Number.isSafeInteger(row.pending) ||
+    row.pending < 0 ||
+    !Number.isSafeInteger(row.failed) ||
+    row.failed < 0 ||
+    !Number.isSafeInteger(row.overdue) ||
+    row.overdue < 0 ||
+    row.failed > row.pending ||
+    row.overdue > row.pending
+  ) {
+    throw new AppError('DEPENDENCY_UNAVAILABLE');
+  }
+  return { failed: row.failed, overdue: row.overdue, pending: row.pending };
 }
 
 async function executeDeletion(
