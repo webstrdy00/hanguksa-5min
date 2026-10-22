@@ -1,4 +1,4 @@
-import { User } from '@apps-in-toss/web-framework';
+import { Environment, User } from '@apps-in-toss/web-framework';
 
 /**
  * 앱인토스 사용자 식별키 획득 (공통 06 §1 1단계).
@@ -14,7 +14,9 @@ import { User } from '@apps-in-toss/web-framework';
  * (앱 버전 부족이면 UNSUPPORTED_APP_VERSION, 그 외 UNKNOWN_ERROR)
  *
  * 공통 01 §1: 로컬 브라우저와 토스/샌드박스 동작이 다르므로 환경 분기를 둔다.
- * `isSupported()` 가 그 분기점이다. 로컬 브라우저에서는 MOCK 으로 떨어진다.
+ * 호스트 환경은 `Environment.environment` 로 확인한다.
+ * `isSupported()` 는 앱 버전 지원 여부이므로 환경 판별에 사용하지 않는다.
+ * MOCK 은 토스/샌드박스 밖의 개발 빌드에서만 허용하고 운영 빌드는 항상 실제 SDK 를 쓴다.
  */
 
 const MOCK_KEY_STORAGE_HINT = 'hanguksa5min:MOCK-anon-key';
@@ -41,7 +43,7 @@ export const tossIdentityAdapter: IdentityAdapter = {
 /**
  * 개발용 MOCK 어댑터.
  *
- * 토스 WebView 밖(로컬 브라우저)에서만 쓰인다.
+ * 토스/샌드박스 밖의 개발 빌드(로컬 브라우저)에서만 쓰인다.
  * 브라우저 세션 동안 같은 키를 유지해야 "재방문 사용자" 흐름을 확인할 수 있다.
  * 이 값은 개발용 식별키이지 토큰이 아니다. 실제 anonKey 와 내부 access token 은
  * 절대 웹 스토리지에 저장하지 않는다 (공통 02 §2).
@@ -59,16 +61,17 @@ export const mockIdentityAdapter: IdentityAdapter = {
   },
 };
 
-/** 토스 앱 안에서 실행 중이고 SDK 가 이 기능을 지원하는지. */
+/** 앱 버전 지원 여부와 별개로 토스/샌드박스 호스트 안에서 실행 중인지. */
 export function isTossEnvironment(): boolean {
   try {
-    return User.getAnonymousKey.isSupported();
+    const environment = Environment.environment;
+    return environment === 'toss' || environment === 'sandbox';
   } catch {
-    // 로컬 브라우저에서는 브릿지가 없어 예외가 날 수 있다.
+    // 로컬 브라우저에서는 호스트 상수가 없어 예외가 날 수 있다.
     return false;
   }
 }
 
 export function createIdentityAdapter(): IdentityAdapter {
-  return isTossEnvironment() ? tossIdentityAdapter : mockIdentityAdapter;
+  return import.meta.env.DEV && !isTossEnvironment() ? mockIdentityAdapter : tossIdentityAdapter;
 }
