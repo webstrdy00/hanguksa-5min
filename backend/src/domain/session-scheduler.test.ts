@@ -43,6 +43,47 @@ function input(overrides: Partial<SchedulerInput> = {}): SchedulerInput {
 }
 
 describe('슬롯 구성 (07 §2: 복습 2 + 취약 1 + 신규 2)', () => {
+  it.each([450, 500])(
+    '%i문항에서도 복습·취약·신규 구성을 입력 순서와 무관하게 유지한다',
+    (size) => {
+      const pool = Array.from({ length: size }, (_, i) =>
+        question(String(i).padStart(4, '0'), {
+          era: i < 2 ? 'goryeo' : i < 20 ? 'modern' : 'ancient',
+          topic: i < 2 ? 'politics' : i < 20 ? 'society' : 'culture',
+          difficulty: (i % 3) + 1,
+        }),
+      );
+      const states = pool.slice(0, 2).map((row, i) => ({
+        canonicalQuestionId: row.canonicalQuestionId,
+        reviewDueAt: daysAgo(3 - i),
+        lastSeenAt: daysAgo(4 - i),
+      }));
+      const options = input({
+        pool,
+        states,
+        mastery: [
+          { era: 'modern', topic: 'society', seenCount: 10, correctCount: 1 },
+          { era: 'ancient', topic: 'culture', seenCount: 10, correctCount: 9 },
+        ],
+      });
+      const selected = selectDailySet(options);
+      expect(
+        selectDailySet({ ...options, pool: [...pool].reverse(), states: [...states].reverse() }),
+      ).toEqual(selected);
+      expect(selected.map((slot) => slot.slotSource)).toEqual([
+        'review',
+        'review',
+        'weak',
+        'new',
+        'new',
+      ]);
+      expect(selected.slice(0, 2).map((slot) => slot.canonicalQuestionId)).toEqual(
+        states.map((state) => state.canonicalQuestionId),
+      );
+      expect(new Set(selected.map((slot) => slot.canonicalQuestionId)).size).toBe(5);
+    },
+  );
+
   it('후보가 충분하면 2 + 1 + 2 로 채운다', () => {
     const pool: PoolQuestion[] = [
       question('r1'),
