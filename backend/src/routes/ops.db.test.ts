@@ -13,7 +13,11 @@ import {
 import type { AppInstance } from '../http/types.ts';
 import { startPeriodicWorker } from '../jobs/periodic-worker.ts';
 import type { JobRunResult } from '../services/mastery-jobs.ts';
-import { runNextMasteryRecalcJob, runPendingMasteryRecalcJobs } from '../services/mastery-jobs.ts';
+import {
+  getMasteryQueuePending,
+  runNextMasteryRecalcJob,
+  runPendingMasteryRecalcJobs,
+} from '../services/mastery-jobs.ts';
 
 /**
  * 오류 신고 · retire/void · 재계산 job · kill switch 통합 테스트 (07 §9, 09 §2, 공통 02 §7).
@@ -339,6 +343,7 @@ describe('E2E P0: void 후 정답률 보정 (08 §5)', () => {
     const stopWorker = startPeriodicWorker(
       async () => {
         finish(await runPendingMasteryRecalcJobs());
+        return await getMasteryQueuePending();
       },
       () => fail(new Error('숙련도 재계산 워커 실행 실패')),
     );

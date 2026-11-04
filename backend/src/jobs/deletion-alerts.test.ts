@@ -8,9 +8,13 @@ const healthy = { failed: 0, overdue: 0, unavailable: false };
 
 it('비활성 및 정상 상태에는 외부 요청을 보내지 않는다', async () => {
   const send = vi.fn<typeof fetch>();
-  await createDeletionAlerts(undefined, 'dev', vi.fn(), send)(unhealthy);
-  await createDeletionAlerts(url, 'production', vi.fn(), send)(healthy);
+  const disabled = createDeletionAlerts(undefined, 'dev', vi.fn(), send);
+  const enabled = createDeletionAlerts(url, 'production', vi.fn(), send);
+  await disabled(unhealthy);
+  await enabled(healthy);
   expect(send).not.toHaveBeenCalled();
+  expect(disabled.hasPendingDelivery()).toBe(false);
+  expect(enabled.hasPendingDelivery()).toBe(false);
 });
 
 it('개인정보 없이 건수만 보내고 지속 장애 30분 제한과 정상화를 처리한다', async () => {
@@ -53,12 +57,14 @@ it.each([429, 503])('%s 전송 실패는 원문 없이 보고하고 5분 뒤 재
   const notify = createDeletionAlerts(url, 'production', onError, send, () => now);
   await notify(unhealthy);
   expect(onError).toHaveBeenCalledWith();
+  expect(notify.hasPendingDelivery()).toBe(true);
   now = 5 * 60_000 - 1;
   await notify(unhealthy);
   expect(send).toHaveBeenCalledTimes(1);
   now++;
   await notify(unhealthy);
   expect(send).toHaveBeenCalledTimes(2);
+  expect(notify.hasPendingDelivery()).toBe(false);
 });
 
 it('중단 신호를 사용하는 네트워크 오류를 외부로 던지지 않는다', async () => {
@@ -115,13 +121,64 @@ it('최초 알림 전송 실패 후 큐가 정상화되어도 미전송 사실�
     .mockResolvedValueOnce(new Response(null, { status: 204 }));
   const notify = createDeletionAlerts(url, 'production', vi.fn(), send, () => now);
   await notify(unhealthy);
+  expect(notify.hasPendingDelivery()).toBe(true);
   await notify(healthy);
+  expect(notify.hasPendingDelivery()).toBe(true);
   expect(send).toHaveBeenCalledTimes(1);
   now = 5 * 60_000;
   await notify(healthy);
   expect(send).toHaveBeenCalledTimes(2);
+  expect(notify.hasPendingDelivery()).toBe(false);
   expect(send.mock.calls[1]![1]!.body).toContain('정상화');
   expect(send.mock.calls[1]![1]!.body).toContain('이전 알림 전송 실패');
   await notify(healthy);
   expect(send).toHaveBeenCalledTimes(2);
+});
+
+it('정상화 알림 실패 후 장애가 다시 생겨도 30분 제한보다 5분 전송 재시도가 우선한다', async () => {
+  let now = 0;
+  const send = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(null, { status: 204 }))
+    .mockRejectedValueOnce(new Error('MOCK recovery delivery failure'))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }));
+  const notify = createDeletionAlerts(url, 'production', vi.fn(), send, () => now);
+  await notify(unhealthy);
+  now = 30_000;
+  await notify(healthy);
+  expect(notify.hasPendingDelivery()).toBe(true);
+  now += 5 * 60_000 - 1;
+  await notify(unhealthy);
+  expect(send).toHaveBeenCalledTimes(2);
+  now++;
+  await notify(unhealthy);
+  expect(send).toHaveBeenCalledTimes(3);
+  expect(notify.hasPendingDelivery()).toBe(false);
+  expect(send.mock.calls[2]![1]!.body).toContain('이전 알림 전송 실패');
+});
+
+it('숫자 반환 계약과 전후 조회를 유지하며 처리 후 대기 건수를 추가 조회 없이 관찰한다', async () => {
+  const before = { failed: 0, overdue: 0, pending: 50 };
+  const after = { failed: 0, overdue: 0, pending: 1 };
+  const inspect = vi.fn().mockResolvedValueOnce(before).mockResolvedValueOnce(after);
+  const run = vi.fn().mockResolvedValue(0);
+  const notify = vi.fn().mockResolvedValue(undefined);
+  const onHealth = vi.fn();
+  const batch = createMonitoredDeletionBatch(run, inspect, notify, onHealth);
+  expect(await batch()).toBe(0);
+  expect(inspect).toHaveBeenCalledTimes(2);
+  expect(onHealth).toHaveBeenCalledExactlyOnceWith(after);
+  expect(onHealth.mock.invocationCallOrder[0]).toBeGreaterThan(run.mock.invocationCallOrder[0]!);
+  expect(notify).toHaveBeenCalledExactlyOnceWith({ ...after, unavailable: false });
+});
+
+it('처리 후 큐 조회 실패는 정상 관측을 알리지 않고 기존 재시도 경로로 전달한다', async () => {
+  const error = new Error('MOCK post-batch database failure');
+  const inspect = vi.fn().mockResolvedValueOnce(healthy).mockRejectedValueOnce(error);
+  const notify = vi.fn().mockResolvedValue(undefined);
+  const onHealth = vi.fn();
+  const batch = createMonitoredDeletionBatch(() => Promise.resolve(1), inspect, notify, onHealth);
+  await expect(batch()).rejects.toBe(error);
+  expect(onHealth).not.toHaveBeenCalled();
+  expect(notify).toHaveBeenCalledExactlyOnceWith({ ...healthy, unavailable: true });
 });

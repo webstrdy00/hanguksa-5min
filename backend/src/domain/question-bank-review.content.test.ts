@@ -7,6 +7,8 @@ import { ERAS } from '../db/schema/enums.ts';
 // Private content suite: run explicitly with pnpm test:content.
 // Editorial evidence is not human approval. Keep the exact reviewed payload so
 // later content edits cannot silently inherit an earlier item's review receipt.
+// The sole approved delta is #156's era (docs/04_콘텐츠_AI_운영.docx, 2026-10-14).
+// Historical receipts and their era membership remain unchanged.
 const questionSchema = z
   .object({
     era: z.enum(ERAS),
@@ -93,13 +95,18 @@ describe('full question-bank editorial evidence (not human approval)', () => {
     }
   });
 
-  it('preserves the approved 310 records exactly while adding 140 separately evidenced candidates', () => {
+  it('preserves the approved 310 except #156 era and adds 140 evidenced candidates', () => {
     expect(bank).toHaveLength(450);
-    expect(
-      createHash('sha256')
-        .update(JSON.stringify(bank.slice(0, 310)))
-        .digest('hex'),
-    ).toBe('ddf2a74e67d17121d8500baa2959dbc93489bb1a2b979ca6d7cf8ec23a150ad1');
+    const historicalBank = bank
+      .slice(0, 310)
+      .map((question, index) =>
+        index === 155
+          ? { ...z.record(z.string(), z.unknown()).parse(question), era: 'joseon_early' }
+          : question,
+      );
+    expect(createHash('sha256').update(JSON.stringify(historicalBank)).digest('hex')).toBe(
+      'ddf2a74e67d17121d8500baa2959dbc93489bb1a2b979ca6d7cf8ec23a150ad1',
+    );
     const additions = expansionReceipts.flatMap((receipt) => receipt.entries);
     expect(additions).toHaveLength(140);
     expect(additions.map((entry) => entry.index).sort((a, b) => a - b)).toEqual(
@@ -128,9 +135,21 @@ describe('full question-bank editorial evidence (not human approval)', () => {
     }
   });
 
-  it('binds each receipt to the exact question and leaves no unresolved editorial issue', () => {
+  it('applies the approved late-Joseon classification to both Donguibogam items', () => {
+    for (const index of [156, 383]) {
+      expect(questionSchema.parse(bank[index - 1]).era, `#${index}`).toBe('joseon_late');
+    }
+    const historical = receipts
+      .flatMap((receipt) => receipt.entries)
+      .find((entry) => entry.index === 156);
+    expect(historical?.question.era).toBe('joseon_early');
+  });
+
+  it('binds each receipt with only the approved #156 era delta and no unresolved issue', () => {
     for (const entry of entries) {
-      expect(entry.question, `stale review #${entry.index}`).toEqual(bank[entry.index - 1]);
+      const expectedQuestion =
+        entry.index === 156 ? { ...entry.question, era: 'joseon_late' } : entry.question;
+      expect(bank[entry.index - 1], `stale review #${entry.index}`).toEqual(expectedQuestion);
       expect(entry.unresolved, `unresolved review #${entry.index}`).toEqual([]);
     }
   });

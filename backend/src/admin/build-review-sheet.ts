@@ -26,10 +26,12 @@ interface Question {
   choices: string[];
   correctIndex: number;
   explanation: string;
+  wrongAnswerNotes?: string[];
   memoryKeyword?: string;
   sourceRefs?: { title: string; url: string }[];
   sourceAccessedAt?: string;
   rightsType?: string;
+  rightsNote?: string;
 }
 
 const ERA_LABEL: Record<string, string> = {
@@ -156,8 +158,10 @@ function render(items: Question[]): string {
   <p class="q">${escapeHtml(q.prompt)}</p>
   <ol class="choices">${choices}</ol>
   <p class="exp"><b>해설</b> ${escapeHtml(q.explanation)}</p>
+  ${q.wrongAnswerNotes?.length ? `<div class="exp"><b>오답 구분 근거</b><ul>${q.wrongAnswerNotes.map((note) => `<li>${escapeHtml(note)}</li>`).join('')}</ul></div>` : ''}
   ${q.memoryKeyword ? `<p class="kw">기억 키워드 · ${escapeHtml(q.memoryKeyword)}</p>` : ''}
   <p class="src">출처 ${sources || '<i>없음</i>'} <span class="date">(확인 ${escapeHtml(q.sourceAccessedAt ?? '-')})</span></p>
+  ${q.rightsNote ? `<p class="src"><b>권리 메모</b> ${escapeHtml(q.rightsNote)}</p>` : ''}
   <label class="chk"><input type="checkbox"> 사실·정답 유일성·표현 확인함</label>
 </section>`;
     })
@@ -193,6 +197,7 @@ function render(items: Question[]): string {
 <div class="summary">
   전체 <b>${items.length}</b>문항 · 자동 점검 경고 <b>${flagged}</b>건<br>
   검수 기준 — ① 사실이 정확한가 ② 정답이 하나뿐인가 ③ 오답이 그럴듯한가 ④ 출처가 내용을 뒷받침하는가<br>
+  이 시트 생성과 자동 점검은 사람의 검수 완료나 운영 발행을 의미하지 않습니다.<br>
   <b>틀린 문항 번호를 적어서 알려주세요.</b> 수정 후 다시 투입합니다.
 </div>
 ${cards}
