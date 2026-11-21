@@ -1,5 +1,6 @@
 import type { PropsWithChildren, ReactNode } from 'react';
-import { ApiError, NetworkError } from '../api/client.ts';
+import { ApiError, NetworkError, ResponseFormatError } from '../api/client.ts';
+import { AuthInitializationError } from '../auth/errors.ts';
 
 /**
  * 공통 UI 조각 (공통 05 §3 접근성 P0, 02 UX §5).
@@ -60,6 +61,8 @@ export function EmptyState({
 }
 
 function describeError(error: unknown): { message: string; retryable: boolean } {
+  if (error instanceof AuthInitializationError) return { message: error.message, retryable: true };
+  if (error instanceof ResponseFormatError) return { message: error.message, retryable: true };
   if (error instanceof NetworkError) return { message: error.message, retryable: true };
   if (error instanceof ApiError) return { message: error.message, retryable: error.retryable };
   return { message: '알 수 없는 오류가 발생했어요.', retryable: true };

@@ -3,6 +3,8 @@ import type { PropsWithChildren } from 'react';
 import {
   ApiError,
   NetworkError,
+  RequestTimeoutError,
+  ResponseFormatError,
   request,
   setAccessToken,
   setReauthorizer,
@@ -10,6 +12,7 @@ import {
 } from '../api/client.ts';
 import type { BootstrapResponse } from '../api/types.ts';
 import { AuthContext, type AuthState, type AuthStatus } from './context.ts';
+import { AuthInitializationError } from './errors.ts';
 import { createIdentityAdapter } from './identity.ts';
 
 /**
@@ -35,7 +38,20 @@ export function AuthProvider({ children }: PropsWithChildren): JSX.Element {
 
     const run = (async (): Promise<string | null> => {
       try {
-        const anonKey = await withNetworkTimeout(() => adapter.getAnonymousKey());
+        let anonKey: string;
+        try {
+          anonKey = await withNetworkTimeout(() => adapter.getAnonymousKey());
+        } catch (caught) {
+          throw new AuthInitializationError(
+            caught instanceof RequestTimeoutError
+              ? 'AUTH_IDENTITY_TIMEOUT'
+              : 'AUTH_IDENTITY_FAILED',
+          );
+        }
+        if (typeof anonKey !== 'string' || anonKey.trim().length === 0) {
+          throw new AuthInitializationError('AUTH_IDENTITY_FAILED');
+        }
+
         // 429/503만 1초, 2초 후 재시도한다. 식별키는 같은 bootstrap 안에서 재사용한다.
         for (let attempt = 0; ; attempt += 1) {
           if (!active.current) return null;
@@ -47,10 +63,14 @@ export function AuthProvider({ children }: PropsWithChildren): JSX.Element {
             });
 
             if (!active.current) return null;
-            setAccessToken(result.accessToken);
+            const token = result?.accessToken;
+            if (typeof token !== 'string' || token.length === 0 || /[^\x21-\x7e]/.test(token)) {
+              throw new AuthInitializationError('AUTH_RESPONSE_INVALID');
+            }
+            setAccessToken(token);
             setStatus('authenticated');
             setError(null);
-            return result.accessToken;
+            return token;
           } catch (caught) {
             if (
               !(caught instanceof ApiError) ||
@@ -81,10 +101,16 @@ export function AuthProvider({ children }: PropsWithChildren): JSX.Element {
         setAccessToken(null);
         setStatus('failed');
 
-        if (caught instanceof NetworkError || caught instanceof ApiError) {
+        if (
+          caught instanceof NetworkError ||
+          caught instanceof ApiError ||
+          caught instanceof AuthInitializationError
+        ) {
           setError(caught);
+        } else if (caught instanceof ResponseFormatError) {
+          setError(new AuthInitializationError('AUTH_RESPONSE_INVALID'));
         } else {
-          setError(new Error('알 수 없는 오류가 발생했어요.'));
+          setError(new AuthInitializationError('AUTH_BOOTSTRAP_FAILED'));
         }
         return null;
       } finally {

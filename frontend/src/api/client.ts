@@ -27,6 +27,13 @@ export class ApiError extends Error {
   }
 }
 
+export class ResponseFormatError extends Error {
+  constructor() {
+    super('서버 응답을 확인할 수 없어요. 잠시 후 다시 시도해주세요.');
+    this.name = 'ResponseFormatError';
+  }
+}
+
 /** 네트워크 자체가 실패한 경우. 사용자에게는 연결 문제로 안내한다. */
 export class NetworkError extends Error {
   constructor() {
@@ -87,22 +94,26 @@ interface RequestOptions {
 }
 
 async function parseError(response: Response): Promise<ApiError> {
+  const requestId = response.headers.get('x-request-id');
   let envelope: ErrorEnvelope = {
-    code: 'UNKNOWN',
-    message: '알 수 없는 오류가 발생했어요.',
-    requestId: response.headers.get('x-request-id') ?? '',
+    code: 'INVALID_ERROR_RESPONSE',
+    message: '서버 오류가 발생했어요. 잠시 후 다시 시도해주세요.',
+    requestId: typeof requestId === 'string' ? requestId : '',
     retryable: response.status >= 500,
   };
 
   try {
-    const parsed = (await response.json()) as Partial<ErrorEnvelope>;
-    if (typeof parsed.code === 'string' && typeof parsed.message === 'string') {
-      envelope = {
-        code: parsed.code,
-        message: parsed.message,
-        requestId: parsed.requestId ?? envelope.requestId,
-        retryable: parsed.retryable ?? envelope.retryable,
-      };
+    const parsed: unknown = await response.json();
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      const fields = parsed as Record<string, unknown>;
+      if (typeof fields.code === 'string' && typeof fields.message === 'string') {
+        envelope = {
+          code: fields.code,
+          message: fields.message,
+          requestId: typeof fields.requestId === 'string' ? fields.requestId : envelope.requestId,
+          retryable: typeof fields.retryable === 'boolean' ? fields.retryable : envelope.retryable,
+        };
+      }
     }
   } catch {
     // 본문이 JSON 이 아니면 기본 envelope 를 쓴다.
@@ -138,7 +149,11 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
       if (!response.ok) throw await parseError(response);
       if (response.status === 204) return undefined as T;
-      return (await response.json()) as T;
+      try {
+        return (await response.json()) as T;
+      } catch {
+        throw new ResponseFormatError();
+      }
     });
   } catch (error) {
     if (
