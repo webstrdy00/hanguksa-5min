@@ -1,16 +1,8 @@
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { trackScreen } from '../analytics/events.ts';
 import { useProgress } from '../api/hooks.ts';
 import { ERA_LABELS, type EraProgress } from '../api/types.ts';
-import {
-  AsyncBoundary,
-  EmptyState,
-  MIN_TOUCH_SIZE,
-  Screen,
-  Section,
-  StatusTag,
-} from '../components/common.tsx';
+import { AsyncBoundary, EmptyState, Screen, Section, StatusTag } from '../components/common.tsx';
 
 /**
  * 학습현황 (02 UX §3, 07 §3).
@@ -21,7 +13,6 @@ import {
  * - 내부 모델 점수 노출
  */
 export function ProgressScreen(): JSX.Element {
-  const navigate = useNavigate();
   const progress = useProgress(true);
 
   useEffect(() => {
@@ -31,24 +22,7 @@ export function ProgressScreen(): JSX.Element {
   return (
     <Screen>
       <Section>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingTop: 20 }}>
-          <button
-            type="button"
-            onClick={() => void navigate(-1)}
-            aria-label="뒤로 가기"
-            style={{
-              minWidth: MIN_TOUCH_SIZE,
-              minHeight: MIN_TOUCH_SIZE,
-              border: 'none',
-              background: 'none',
-              fontSize: 20,
-              cursor: 'pointer',
-            }}
-          >
-            ←
-          </button>
-          <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>학습현황</h1>
-        </div>
+        <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0, paddingTop: 20 }}>학습현황</h1>
       </Section>
 
       <AsyncBoundary

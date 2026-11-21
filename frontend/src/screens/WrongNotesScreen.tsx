@@ -42,24 +42,7 @@ export function WrongNotesScreen(): JSX.Element {
   return (
     <Screen>
       <Section>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingTop: 20 }}>
-          <button
-            type="button"
-            onClick={() => void navigate(-1)}
-            aria-label="뒤로 가기"
-            style={{
-              minWidth: MIN_TOUCH_SIZE,
-              minHeight: MIN_TOUCH_SIZE,
-              border: 'none',
-              background: 'none',
-              fontSize: 20,
-              cursor: 'pointer',
-            }}
-          >
-            ←
-          </button>
-          <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0 }}>오답노트</h1>
-        </div>
+        <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0, paddingTop: 20 }}>오답노트</h1>
 
         <div
           role="tablist"
